@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2024 Intel Corporation
+// Copyright (C) 2023-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #include "continuous_batching_for_prompt_lookup.hpp"
@@ -67,7 +67,7 @@ void ContinuousBatchingPipeline::ContinuousBatchingForPromptLookupImpl::generate
             const auto sampling_params = request->get_sampling_parameters();
             {
                 const auto generated_len = running_sequence->get_generated_len();
-                const auto left_generated_len = std::min(sampling_params.max_new_tokens, sampling_params.max_length) - generated_len - 1;
+                const auto left_generated_len = request->get_max_new_tokens() - generated_len - 1;
                 min_num_assistant_tokens = std::min(sampling_params.num_assistant_tokens, left_generated_len);
             }
             TokenIds candidates = generate_candidates(full_input_ids, min_num_assistant_tokens, sampling_params.max_ngram_size);
@@ -81,6 +81,18 @@ void ContinuousBatchingPipeline::ContinuousBatchingForPromptLookupImpl::generate
         }
         request->set_num_validated_tokens(max_validation_len);
     }
+}
+
+bool ContinuousBatchingPipeline::ContinuousBatchingForPromptLookupImpl::is_requests_empty() {
+    return m_requests.empty();
+}
+
+std::vector<SequenceGroup::Ptr> ContinuousBatchingPipeline::ContinuousBatchingForPromptLookupImpl::get_awaiting_requests() {
+    return m_awaiting_requests;
+}
+
+size_t ContinuousBatchingPipeline::ContinuousBatchingForPromptLookupImpl::get_processed_tokens_per_iteration() {
+    return m_batch_size;
 }
 
 }

@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2024 Intel Corporation
+// Copyright (C) 2023-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #include <fstream>
@@ -96,14 +96,7 @@ GenerationConfig::GenerationConfig(const std::filesystem::path& json_path) {
 }
 
 void GenerationConfig::set_eos_token_id(size_t tokenizer_eos_token_id) {
-    if (eos_token_id < 0) {
-        eos_token_id = tokenizer_eos_token_id;
-    } else {
-        OPENVINO_ASSERT(eos_token_id == tokenizer_eos_token_id,
-            "EOS token ID is different in generation config (", eos_token_id, ") and tokenizer (",
-            tokenizer_eos_token_id, ")");
-    }
-    // Merge user defined stop tokens with model EOS token
+    eos_token_id = tokenizer_eos_token_id;
     stop_token_ids.insert(eos_token_id);
 }
 
@@ -119,12 +112,16 @@ void GenerationConfig::update_generation_config(const ov::AnyMap& properties) {
     read_anymap_param(properties, "stop_strings", stop_strings);
     read_anymap_param(properties, "include_stop_str_in_output", include_stop_str_in_output);
     read_anymap_param(properties, "stop_token_ids", stop_token_ids);
+    if (eos_token_id > 0) {
+        set_eos_token_id(eos_token_id);
+    }
 
     // generic
     read_anymap_param(properties, "echo", echo);
     read_anymap_param(properties, "logprobs", logprobs);
     read_anymap_param(properties, "num_return_sequences", num_return_sequences);
     read_anymap_param(properties, "adapters", adapters);
+    read_anymap_param(properties, "apply_chat_template", apply_chat_template);
 
     // penalties
     read_anymap_param(properties, "frequency_penalty", frequency_penalty);
@@ -230,9 +227,9 @@ void GenerationConfig::validate() const {
         OPENVINO_ASSERT(temperature > 0, "When 'do_sample' is true, temperature must be a strictly positive float, but got ", temperature);
     } else {
         // parameters requiring multinomial
-        OPENVINO_ASSERT(top_k == std::numeric_limits<size_t>::max(), "When 'do_sample' is false, top_k must be max of size_t, but got ", top_k);
-        OPENVINO_ASSERT(top_p == 1.0f, "When 'do_sample' is false, top_p must be 1.0f, but got ", top_p);
-        OPENVINO_ASSERT(temperature == 1.0f, "When 'do_sample' is false, temperature must be a 1.0f, but got ", temperature);
+        // OPENVINO_ASSERT(top_k == std::numeric_limits<size_t>::max(), "When 'do_sample' is false, top_k must be max of size_t, but got ", top_k);
+        // OPENVINO_ASSERT(top_p == 1.0f, "When 'do_sample' is false, top_p must be 1.0f, but got ", top_p);
+        // OPENVINO_ASSERT(temperature == 1.0f, "When 'do_sample' is false, temperature must be a 1.0f, but got ", temperature);
     }
 
     if (is_beam_search()) {
@@ -252,10 +249,10 @@ void GenerationConfig::validate() const {
         }
     } else {
         // parameters requiring beam search
-        OPENVINO_ASSERT(num_beam_groups == 1, "'num_beam_groups' is supported by beam search only and should be 1 otherwise, but got ", num_beam_groups);
-        OPENVINO_ASSERT(no_repeat_ngram_size == std::numeric_limits<size_t>::max(), "'no_repeat_ngram_size' is supported only by beam search, otherwise should be set to max of size_t, but got ", no_repeat_ngram_size);
-        OPENVINO_ASSERT(diversity_penalty == 0.0f, "'diversity_penalty' is set to ", diversity_penalty, " (default is 0.0f), which is supported only by beam search sampling");
-        OPENVINO_ASSERT(length_penalty == 1.0f, "'length_penalty' is set to ", length_penalty, " (default is 1.0f), which is supported only by beam search sampling");
+        // OPENVINO_ASSERT(num_beam_groups == 1, "'num_beam_groups' is supported by beam search only and should be 1 otherwise, but got ", num_beam_groups);
+        // OPENVINO_ASSERT(no_repeat_ngram_size == std::numeric_limits<size_t>::max(), "'no_repeat_ngram_size' is supported only by beam search, otherwise should be set to max of size_t, but got ", no_repeat_ngram_size);
+        // OPENVINO_ASSERT(diversity_penalty == 0.0f, "'diversity_penalty' is set to ", diversity_penalty, " (default is 0.0f), which is supported only by beam search sampling");
+        // OPENVINO_ASSERT(length_penalty == 1.0f, "'length_penalty' is set to ", length_penalty, " (default is 1.0f), which is supported only by beam search sampling");
     }
 
     // assistant generation

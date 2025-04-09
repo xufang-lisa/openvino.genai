@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2024 Intel Corporation
+// Copyright (C) 2023-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #pragma once
@@ -95,6 +95,8 @@ private:
     std::shared_ptr<ov::Model> m_model;
 
     Tokenizer m_clip_tokenizer;
+
+    bool m_slice_batch1_output = false;
 };
 
 } // namespace genai

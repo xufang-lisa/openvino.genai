@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2024 Intel Corporation
+// Copyright (C) 2023-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #pragma once
@@ -12,7 +12,7 @@
 template <typename T>
 void print_array(T * array, size_t size) {
     std::cout << " => [ ";
-    for (size_t i = 0; i < size; ++i) {
+    for (size_t i = 0; i < std::min(size, size_t(10)); ++i) {
         std::cout << array[i] << " ";
     }
     std::cout << " ] " << std::endl;
@@ -20,6 +20,7 @@ void print_array(T * array, size_t size) {
 
 inline void print_tensor(std::string name, ov::Tensor tensor) {
     std::cout << name;
+    std::cout << " " << tensor.get_shape().to_string();
     if (tensor.get_element_type() == ov::element::i32) {
         print_array(tensor.data<int>(), tensor.get_size());
     } else if (tensor.get_element_type() == ov::element::i64) {
@@ -70,4 +71,85 @@ inline void read_tensor(const std::string& file_name, ov::Tensor tensor, bool as
     }
 
     std::cout << "Closing " << file_name << std::endl;
+}
+
+/// @brief Read an npy file created in Python:
+/// with open('ndarray.npy', 'wb') as file:
+///     np.save(file, ndarray)
+inline ov::Tensor from_npy(const std::filesystem::path& npy) {
+    std::ifstream fstream{npy, std::ios::binary};
+    fstream.seekg(0, std::ios_base::end);
+    OPENVINO_ASSERT(fstream.good());
+    auto full_file_size = static_cast<std::size_t>(fstream.tellg());
+    fstream.seekg(0, std::ios_base::beg);
+
+    std::string magic_string(6, ' ');
+    fstream.read(&magic_string[0], magic_string.size());
+    OPENVINO_ASSERT(magic_string == "\x93NUMPY");
+
+    fstream.ignore(2);
+    unsigned short header_size;
+    fstream.read((char*)&header_size, sizeof(header_size));
+
+    std::string header(header_size, ' ');
+    fstream.read(&header[0], header.size());
+
+    int idx, from, to;
+
+    // Verify fortran order is false
+    const std::string fortran_key = "'fortran_order':";
+    idx = header.find(fortran_key);
+    OPENVINO_ASSERT(idx != -1);
+
+    from = header.find_last_of(' ', idx + fortran_key.size()) + 1;
+    to = header.find(',', from);
+    auto fortran_value = header.substr(from, to - from);
+    OPENVINO_ASSERT(fortran_value == "False");
+
+    // Verify array shape matches the input's
+    const std::string shape_key = "'shape':";
+    idx = header.find(shape_key);
+    OPENVINO_ASSERT(idx != -1);
+
+    from = header.find('(', idx + shape_key.size()) + 1;
+    to = header.find(')', from);
+
+    std::string shape_data = header.substr(from, to - from);
+    ov::Shape _shape;
+
+    if (!shape_data.empty()) {
+        shape_data.erase(std::remove(shape_data.begin(), shape_data.end(), ','), shape_data.end());
+
+        std::istringstream shape_data_stream(shape_data);
+        size_t value;
+        while (shape_data_stream >> value) {
+            _shape.push_back(value);
+        }
+    }
+
+    // Verify array data type matches input's
+    std::string dataTypeKey = "'descr':";
+    idx = header.find(dataTypeKey);
+    OPENVINO_ASSERT(-1 != idx);
+
+    from = header.find('\'', idx + dataTypeKey.size()) + 1;
+    to = header.find('\'', from);
+    std::string type;
+    type = header.substr(from, to - from);
+
+    size_t _size = 0;
+    _size = full_file_size - static_cast<std::size_t>(fstream.tellg());
+    ov::element::Type tensor_type;
+    if ("<f4" == type) {
+        tensor_type = ov::element::f32;
+    } else if ("|u1" == type) {
+        tensor_type = ov::element::u8;
+    } else {
+        OPENVINO_THROW("Not implemented dtype");
+    }
+    OPENVINO_ASSERT(_size == ov::shape_size(_shape) * tensor_type.size());
+    ov::Tensor tensor{tensor_type, _shape};
+    fstream.read((char*)tensor.data(), _size);
+    OPENVINO_ASSERT(fstream.gcount() == _size);
+    return tensor;
 }

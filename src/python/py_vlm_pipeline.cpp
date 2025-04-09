@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2024 Intel Corporation
+// Copyright (C) 2023-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 
@@ -24,6 +24,16 @@ auto vlm_generate_docstring = R"(
 
     :param prompt: input prompt
     :type prompt: str
+    The prompt can contain <ov_genai_image_i> with i replaced with
+    an actual zero based index to refer to an image. Reference to
+    images used in previous prompts isn't implemented.
+    A model's native image tag can be used instead of
+    <ov_genai_image_i>. These tags are:
+    MiniCPM-V-2_6: (<image>./</image>)\n
+    Phi-3-vision: <|image_i|>\n - the index starts with one
+    Qwen2-VL: <|vision_start|><|image_pad|><|vision_end|>
+    If the prompt doesn't contain image tags, but images are
+    provided, the tags are prepended to the prompt.
 
     :param images: image or list of images
     :type images: List[ov.Tensor] or ov.Tensor
@@ -45,6 +55,17 @@ auto vlm_generate_kwargs_docstring = R"(
     Generates sequences for VLMs.
 
     :param prompt: input prompt
+    The prompt can contain <ov_genai_image_i> with i replaced with
+    an actual zero based index to refer to an image. Reference to
+    images used in previous prompts isn't implemented.
+    A model's native image tag can be used instead of
+    <ov_genai_image_i>. These tags are:
+    MiniCPM-V-2_6: (<image>./</image>)\n
+    Phi-3-vision: <|image_i|>\n - the index starts with one
+    Qwen2-VL: <|vision_start|><|image_pad|><|vision_end|>
+    If the prompt doesn't contain image tags, but images are
+    provided, the tags are prepended to the prompt.
+
     :type prompt: str
 
     :param kwargs: arbitrary keyword arguments with keys corresponding to generate params.
@@ -96,8 +117,12 @@ py::object call_vlm_generate(
 ) {
     auto updated_config = *pyutils::update_config_from_kwargs(generation_config, kwargs);
     ov::genai::StreamerVariant streamer = pyutils::pystreamer_to_streamer(py_streamer);
-
-    return py::cast(pipe.generate(prompt, images, updated_config, streamer));
+    ov::genai::VLMDecodedResults res;
+    {
+        py::gil_scoped_release rel;
+        res= pipe.generate(prompt, images, updated_config, streamer);
+    }
+    return py::cast(res);
 }
 
 void init_vlm_pipeline(py::module_& m) {
@@ -112,13 +137,13 @@ void init_vlm_pipeline(py::module_& m) {
         .def("get_prepare_embeddings_duration", &ov::genai::VLMPerfMetrics::get_prepare_embeddings_duration)
         .def_readonly("vlm_raw_metrics", &ov::genai::VLMPerfMetrics::vlm_raw_metrics);
 
-    py::class_<ov::genai::VLMDecodedResults>(m, "VLMDecodedResults", decoded_results_docstring)
+    py::class_<ov::genai::VLMDecodedResults, ov::genai::DecodedResults>(m, "VLMDecodedResults", decoded_results_docstring)
         .def(py::init<>())
-        .def_property_readonly("texts", [](const ov::genai::VLMDecodedResults &dr) -> py::typing::List<py::str> { return pyutils::handle_utf8((std::vector<std::string>)dr); })
+        .def_property_readonly("texts", [](const ov::genai::VLMDecodedResults &dr) -> py::typing::List<py::str> { return pyutils::handle_utf8(dr.texts); })
         .def_readonly("scores", &ov::genai::VLMDecodedResults::scores)
         .def_readonly("perf_metrics", &ov::genai::VLMDecodedResults::perf_metrics)
         .def("__str__", [](const ov::genai::VLMDecodedResults &dr) -> py::str {
-            auto valid_utf8_strings = pyutils::handle_utf8((std::vector<std::string>)dr);
+            auto valid_utf8_strings = pyutils::handle_utf8(dr.texts);
             py::str res;
             if (valid_utf8_strings.size() == 1)
                 return valid_utf8_strings[0];
@@ -194,7 +219,13 @@ void init_vlm_pipeline(py::module_& m) {
                const std::string& prompt,
                const py::kwargs& kwargs
             )  -> py::typing::Union<ov::genai::VLMDecodedResults> {
-                return py::cast(pipe.generate(prompt, pyutils::kwargs_to_any_map(kwargs)));
+                auto map = pyutils::kwargs_to_any_map(kwargs);
+                ov::genai::VLMDecodedResults res;
+                {
+                    py::gil_scoped_release rel;
+                    res = pipe.generate(prompt, map);
+                }
+                return py::cast(res);
             },
             py::arg("prompt"), "Input string",
             (vlm_generate_kwargs_docstring + std::string(" \n ")).c_str()

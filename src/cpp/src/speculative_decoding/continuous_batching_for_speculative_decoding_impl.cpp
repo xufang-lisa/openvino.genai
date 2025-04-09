@@ -1,15 +1,14 @@
-// Copyright (C) 2023-2024 Intel Corporation
+// Copyright (C) 2023-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #include "continuous_batching_for_speculative_decoding_impl.hpp"
 
 namespace ov::genai {
 ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::ContinuousBatchingForSpeculativeDecodingImpl(
-    ov::Core& core,
     const std::shared_ptr<ov::Model>& model,
     const Tokenizer& tokenizer,
     const GenerationConfig& generation_config,
-    const DeviceConfig& device_config,
+    const std::vector<KVHeadConfig>& kv_cache_configs,
     const SchedulerConfig& scheduler_config,
     const std::string& device,
     const ov::AnyMap& plugin_config,
@@ -17,7 +16,7 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::Contin
     m_tokenizer = tokenizer;
     m_generation_config = generation_config;
     m_is_validation_mode_enabled = is_validation_mode_enabled;
-    initialize_pipeline(model, scheduler_config, plugin_config, device_config, core);
+    initialize_pipeline(model, scheduler_config, device, plugin_config, kv_cache_configs);
 }
 
 void
@@ -28,18 +27,23 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::finish
         }
     }
     m_sampler->clear_request_info(request->get_request_id());
-    request->set_generation_status(GenerationStatus::DROPPED_BY_HANDLE);
+    request->set_generation_status(GenerationStatus::STOP);
 }
 
 void ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::finish_request(int64_t request_id) {
-    for (size_t i = 0; i < m_requests.size(); ++i) {
-        auto& request = m_requests[i];
-        if (request->get_request_id() != request_id) {
+    auto it = m_requests.begin();
+    while (it != m_requests.end()) {
+        auto& request = *it;
+        if (request->get_request_id() != request_id && request_id != -1) {
+            it++;
             continue;
         }
         finish_request(request);
-        m_requests.erase(m_requests.begin() + i);
-        break;
+        m_requests.erase(it);
+        it = request_id == -1 ? m_requests.begin() : m_requests.end();
+    }
+    if (request_id == -1) {
+        OPENVINO_ASSERT(m_requests.empty());
     }
 }
 
@@ -256,7 +260,7 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::update
         const size_t num_processed_tokens = request->get_num_processed_tokens(),
                      prompt_len = request->get_prompt_len(),
                      updated_context_len = min_candidate_len + prompt_len,
-                     max_new_tokens = request->get_sampling_parameters().max_new_tokens;
+                     max_new_tokens = request->get_max_new_tokens();
         size_t generated_len = request->get_context_len() >= request->get_prompt_len() ? request->get_context_len() - request->get_prompt_len() + 1 : 0;
         if (generated_len > 0 && result.removed_tokens_cnt > 0) {
             request->update_processed_tokens_num(num_processed_tokens - result.removed_tokens_cnt + 1);
@@ -277,6 +281,18 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::update
         break;
     }
     return result;
+}
+
+bool ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::is_requests_empty() {
+    return m_requests.empty();
+}
+
+std::vector<SequenceGroup::Ptr> ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::get_awaiting_requests() {
+    return m_awaiting_requests;
+}
+
+size_t ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::get_processed_tokens_per_iteration() {
+    return m_batch_size;
 }
 
 void
@@ -307,15 +323,17 @@ void ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::m
                 // generate only one token in case of non speculative decoding
                 request->pause_generation(true);
             } else if (request->get_num_processed_tokens() >= request->get_prompt_len() &&
-                (request->get_num_processed_tokens() - request->get_prompt_len() + 1) >= sampling_params.max_new_tokens - 1) {
+                (request->get_num_processed_tokens() - request->get_prompt_len() + 1) >= request->get_max_new_tokens() - 1) {
                 request->pause_generation(true);
             } else if (request->get_num_processed_tokens() == 0 && sampling_params.num_return_sequences > 1) {
                 request->pause_generation(true);
             } else if (sampling_params.num_assistant_tokens <= generated_tokens_cnt && sampling_params.assistant_confidence_threshold == 0.f) {
                 request->pause_generation(true);
-            } else if (sampling_params.max_new_tokens == 0) {
+            } else if (request->get_max_new_tokens() == 0) {
                 request->pause_generation(true);
             } else if (request->get_num_processed_tokens() == request->get_prompt_len()) {
+                request->pause_generation(true);
+            } else if (is_stop_token_id_hit_in_sequence_group(request, sampling_params.stop_token_ids)) {
                 request->pause_generation(true);
             }
             to_generate |= request->can_generate_tokens();

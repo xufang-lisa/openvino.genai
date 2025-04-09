@@ -1,4 +1,4 @@
-# Copyright (C) 2023-2024 Intel Corporation
+# Copyright (C) 2023-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 from openvino_genai import GenerationConfig
@@ -7,12 +7,27 @@ import json
 import os
 import pytest
 
+
+def verify_set_values(generation_config, kwargs):
+    generation_config.validate()
+    for key, value in kwargs.items():
+        if key == "stop_token_ids":
+            continue
+        assert getattr(generation_config, key) == value
+    if "eos_token_id" in kwargs:
+        assert kwargs["eos_token_id"] in generation_config.stop_token_ids
+        if "stop_token_ids" in kwargs:
+            for stop_id in kwargs["stop_token_ids"]:
+                assert stop_id in generation_config.stop_token_ids
+
 configs = [
     # stop conditions
     dict(max_new_tokens=12),
     dict(max_length=12),
     dict(stop_token_ids={2}),
+    dict(eos_token_id=1),
     dict(eos_token_id=1, stop_token_ids={1}),
+    dict(eos_token_id=1, stop_token_ids={2}),
     dict(stop_strings={"a", "b"}),
     dict(ignore_eos=True, max_new_tokens=10),
     dict(ignore_eos=True, max_length=10),
@@ -23,6 +38,10 @@ configs = [
     dict(max_new_tokens=1, do_sample=True, top_k=1),
     dict(max_new_tokens=1, do_sample=True, top_p=0.5),
     dict(max_new_tokens=1, do_sample=True, temperature=0.5),
+    # parameters requiring multimonial are ignored when do_sample=False
+    dict(max_new_tokens=1, top_k=1), # requires do_sample=True
+    dict(max_new_tokens=1, top_p=0.5), # requires do_sample=True
+    dict(max_new_tokens=1, temperature=2.0), # requires do_sample=True
     # beam search
     dict(max_new_tokens=1, num_beams=2),
     dict(max_new_tokens=1, num_beams=2, num_return_sequences=1),
@@ -30,21 +49,28 @@ configs = [
     dict(max_new_tokens=1, num_beams=4, num_beam_groups=2, diversity_penalty=1.0),
     dict(max_new_tokens=1, num_beams=4, length_penalty=1.0),
     dict(max_new_tokens=1, num_beams=4, no_repeat_ngram_size=2),
+    # parameters requiring beam search are ignored when num_beams == 1
+    dict(max_new_tokens=1, num_beam_groups=2), # requiring beam search
+    dict(max_new_tokens=1, no_repeat_ngram_size=2), # requiring beam search
+    dict(max_new_tokens=1, diversity_penalty=1.0), # requiring beam search
+    dict(max_new_tokens=1, length_penalty=2), # requiring beam search
     # assistant generation
     dict(max_new_tokens=1, assistant_confidence_threshold=0.5),
     dict(max_new_tokens=1, num_assistant_tokens=2),
     dict(max_new_tokens=1, num_assistant_tokens=2, max_ngram_size=2), # prompt lookup
+    dict(max_new_tokens=1, apply_chat_template=True),
+    dict(max_new_tokens=1, apply_chat_template=False),
 ]
 @pytest.mark.parametrize("generation_config_kwargs", configs)
 @pytest.mark.precommit
 @pytest.mark.nightly
 def test_valid_configs(generation_config_kwargs):
     config = GenerationConfig(**generation_config_kwargs)
-    config.validate()
+    verify_set_values(config, generation_config_kwargs)
 
     config = GenerationConfig()
     config.update_generation_config(**generation_config_kwargs)
-    config.validate()
+    verify_set_values(config, generation_config_kwargs)
 
 
 invalid_configs = [
@@ -52,8 +78,6 @@ invalid_configs = [
     dict(num_return_sequences=2), # beam search or multimonial is required
     # stop conditions
     dict(), # no stop conditions at all
-    dict(eos_token_id=1), # 'stop_token_ids' does not contain 'eos_token_id'
-    dict(eos_token_id=1, stop_token_ids={2}), # 'stop_token_ids' is not empty, but does not contain 'eos_token_id'
     dict(ignore_eos=True),  # no 'max_new_tokens', no 'max_length' with 'ignore_eos'
     dict(stop_token_ids={-1}), # value in 'stop_token_ids' must be non-negative 
     dict(max_new_tokens=0), # max new tokens cannot be empty (only when 'echo' is True)
@@ -66,10 +90,6 @@ invalid_configs = [
     dict(max_new_tokens=1, do_sample=True, top_p=1.1), # 'top_p' must be within (0, 1] when 'do_sample' is True
     dict(max_new_tokens=1, do_sample=True, top_p=0), # 'top_p' must be within (0, 1] when 'do_sample' is True
     dict(max_new_tokens=1, do_sample=True, temperature=-1.0), # invalid temp
-    # parameters requiring multimonial
-    dict(max_new_tokens=1, top_k=1), # requires do_sample=True
-    dict(max_new_tokens=1, top_p=0.5), # requires do_sample=True
-    dict(max_new_tokens=1, temperature=2.0), # requires do_sample=True
     # beam search
     dict(max_new_tokens=1, num_beams=2, num_return_sequences=3), # 'num_beams' must be >= 'num_return_sequences'
     dict(max_new_tokens=1, num_beams=3, num_beam_groups=2), # 'num_beams' must be divisible by 'num_beam_groups'
@@ -80,11 +100,6 @@ invalid_configs = [
     dict(max_new_tokens=1, num_beams=2, frequency_penalty=1.0), # 'frequency_penalty' is not supported by beam search
     dict(max_new_tokens=1, num_beams=2, presence_penalty=1.0), # 'presence_penalty' is not supported by beam search
     dict(max_new_tokens=1, num_beams=2, repetition_penalty=0.0), # 'repetition_penalty' is not supported by beam search
-    # parameters requiring beam search
-    dict(max_new_tokens=1, num_beam_groups=2), # requiring beam search
-    dict(max_new_tokens=1, no_repeat_ngram_size=2), # requiring beam search
-    dict(max_new_tokens=1, diversity_penalty=1.0), # requiring beam search
-    dict(max_new_tokens=1, length_penalty=2), # requiring beam search
     # assistant generation
     dict(max_new_tokens=1, num_assistant_tokens=2, do_sample=True, num_return_sequences=2), # 'num_return_sequences' must be 1, as we cannot use different number of tokens per sequence within a group
     dict(max_new_tokens=1, assistant_confidence_threshold=1.0, do_sample=True, num_return_sequences=2), # 'num_return_sequences' must be 1, as we cannot use different number of tokens per sequence within a group
@@ -103,6 +118,20 @@ def test_invalid_generation_configs_throws(generation_config_kwargs):
 
     config = GenerationConfig()
     config.update_generation_config(**generation_config_kwargs)
+    with pytest.raises(RuntimeError):
+        config.validate()
+
+
+@pytest.mark.parametrize("fields", invalid_configs + [
+    dict(eos_token_id=1), # 'stop_token_ids' does not contain 'eos_token_id'
+    dict(eos_token_id=1, stop_token_ids={2}), # 'stop_token_ids' is not empty, but does not contain 'eos_token_id'
+])
+@pytest.mark.precommit
+@pytest.mark.nightly
+def test_invalid_fields_assinment_rises(fields):
+    config = GenerationConfig()
+    for key, val in fields.items():
+        setattr(config, key, val)
     with pytest.raises(RuntimeError):
         config.validate()
 
