@@ -69,6 +69,8 @@ void ov::genai::SDPerfMetrics::evaluate_statistics(std::optional<TimePoint> star
     avg_latency = ov::genai::calc_mean_and_std(latency_durations);
 
     inference_duration = ov::genai::calc_mean_and_std(raw_metrics.m_inference_durations);
+    sample_duration = ov::genai::calc_mean_and_std(raw_metrics.m_sample_durations);
+    schedule_duration = ov::genai::calc_mean_and_std(raw_metrics.m_schedule_durations);
 
     throughput = {1000.0f / tpot.mean, (tpot.std * 1000.0f) / (tpot.mean * tpot.mean)};
 
@@ -79,6 +81,10 @@ ov::genai::SDPerModelsPerfMetrics::SDPerModelsPerfMetrics() {
     raw_metrics.m_inference_durations =  {{ MicroSeconds(0.0f) }};
     main_model_metrics.raw_metrics.m_inference_durations =  {{ MicroSeconds(0.0f) }};
     draft_model_metrics.raw_metrics.m_inference_durations =  {{ MicroSeconds(0.0f) }};
+    main_model_metrics.raw_metrics.m_sample_durations =  {{ MicroSeconds(0.0f) }};
+    draft_model_metrics.raw_metrics.m_sample_durations =  {{ MicroSeconds(0.0f) }};
+    main_model_metrics.raw_metrics.m_schedule_durations =  {{ MicroSeconds(0.0f) }};
+    draft_model_metrics.raw_metrics.m_schedule_durations =  {{ MicroSeconds(0.0f) }};
 }
 
 size_t ov::genai::SDPerModelsPerfMetrics::get_num_accepted_tokens() {

@@ -678,6 +678,8 @@ ContinuousBatchingPipeline::EagleDecodingImpl::EagleDecodingImpl(const ov::genai
                                                                                 false);
     m_perf_metrics = ov::genai::SDPerModelsPerfMetrics();
     m_perf_metrics.raw_metrics.m_inference_durations = {{MicroSeconds(0.0f)}};
+    m_perf_metrics.raw_metrics.m_sample_durations = {{MicroSeconds(0.0f)}};
+    m_perf_metrics.raw_metrics.m_schedule_durations = {{MicroSeconds(0.0f)}};
 }
 
 GenerationHandle ContinuousBatchingPipeline::EagleDecodingImpl::add_request(
@@ -747,7 +749,6 @@ void ContinuousBatchingPipeline::EagleDecodingImpl::step() {
     // get logits and last hidden layer
     auto main_generated_requests =
         m_main_pipeline->get_generated_requests();  // feature extraction is enabled in main pipeline
-
     for (const auto& checked_sequence : main_generated_requests) {
         auto update_result = m_draft_pipeline->update_draft_request(checked_sequence.first, checked_sequence.second);
         update_sequence_info[checked_sequence.first].removed_tokens_cnt = update_result.removed_tokens_cnt;
@@ -762,6 +763,7 @@ void ContinuousBatchingPipeline::EagleDecodingImpl::step() {
             m_draft_generations.erase(request_id);
         }
         auto updated_seq_info = update_sequence_info[request_id];
+        m_sd_metrics.update_draft_generated_len(request_id, updated_seq_info.inserted_tokens_cnt);
         // several prompt phase
         if (updated_seq_info.inserted_tokens_cnt == 0) {
             continue;
@@ -789,7 +791,9 @@ void ContinuousBatchingPipeline::EagleDecodingImpl::step() {
         auto main_model_gen_duration = main_timer.get_duration_microsec();
         auto m_main_pipeline_metrics = m_main_pipeline->get_metrics();
         main_raw_perf_counters.m_durations.push_back(MicroSeconds(main_model_gen_duration));
-        main_raw_perf_counters.m_inference_durations[0] = MicroSeconds(m_main_pipeline_metrics.inference_duration);
+        main_raw_perf_counters.m_inference_durations[0] += MicroSeconds(m_main_pipeline_metrics.inference_duration);
+        main_raw_perf_counters.m_sample_durations[0] += MicroSeconds(m_main_pipeline_metrics.sample_duration);
+        main_raw_perf_counters.m_schedule_durations[0] += MicroSeconds(m_main_pipeline_metrics.schedule_duration);
         main_raw_perf_counters.m_batch_sizes.push_back(num_generated_tokens); // or should be processed + generated
         m_sd_metrics.update_generated_len(num_generated_tokens);
     }
@@ -844,6 +848,8 @@ std::vector<EncodedGenerationResult> ContinuousBatchingPipeline::EagleDecodingIm
     const StreamerVariant& streamer) {
     m_perf_metrics = ov::genai::SDPerModelsPerfMetrics();
     m_draft_pipeline->raw_perf_metrics.m_inference_durations =  {{ MicroSeconds(0.0f) }};
+    m_draft_pipeline->raw_perf_metrics.m_sample_durations =  {{ MicroSeconds(0.0f) }};
+    m_draft_pipeline->raw_perf_metrics.m_schedule_durations =  {{ MicroSeconds(0.0f) }};
 
     OPENVINO_ASSERT(!has_non_finished_requests(),
                     "Generate cannot be called while ContinuousBatchingPipeline is already in running state. Use "

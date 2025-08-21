@@ -262,7 +262,10 @@ void ContinuousBatchingPipeline::ContinuousBatchingImpl::step() {
     {
         static ManualTimer scheduling_timer("scheduling");
         scheduling_timer.start();
+        const auto schedule_start = std::chrono::steady_clock::now();
         scheduler_output = m_scheduler->schedule(m_requests);
+        const auto schedule_end = std::chrono::steady_clock::now();
+        m_pipeline_metrics.schedule_duration = PerfMetrics::get_microsec(schedule_end - schedule_start);
         scheduling_timer.end();
 
         m_pipeline_metrics.scheduled_requests = scheduler_output.m_scheduled_sequence_groups_ids.size();
@@ -290,6 +293,7 @@ void ContinuousBatchingPipeline::ContinuousBatchingImpl::step() {
             }
         }
         _free_non_running_requests();
+        m_batch_size = 0;  //TODO?
         return;
     }
     ov::Tensor logits;
@@ -328,7 +332,10 @@ void ContinuousBatchingPipeline::ContinuousBatchingImpl::step() {
     {
         static ManualTimer timer("sample");
         timer.start();
+        const auto sample_start = std::chrono::steady_clock::now();
         sampler_output = m_sampler->sample(m_requests, logits, m_is_validation_mode_enabled);
+        const auto sample_end = std::chrono::steady_clock::now();
+        m_pipeline_metrics.sample_duration = PerfMetrics::get_microsec(sample_end - sample_start);
         m_batch_size = sampler_output.num_generated_tokens;
         timer.end();
     }

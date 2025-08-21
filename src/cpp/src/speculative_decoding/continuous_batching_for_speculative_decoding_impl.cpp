@@ -762,7 +762,9 @@ void ContinuousBatchingPipeline::ContinuousBatchingForEagleDecodingImpl::multist
         if (num_generated_tokens > 0) {
             auto generation_duration = multistep_timer.get_duration_microsec();
             raw_perf_metrics.m_durations.emplace_back(generation_duration);
-            raw_perf_metrics.m_inference_durations[0] = MicroSeconds(pipeline_metrics.inference_duration);
+            raw_perf_metrics.m_inference_durations[0] += MicroSeconds(pipeline_metrics.inference_duration);
+            raw_perf_metrics.m_sample_durations[0] += MicroSeconds(pipeline_metrics.sample_duration);
+            raw_perf_metrics.m_schedule_durations[0] += MicroSeconds(pipeline_metrics.schedule_duration);
             raw_perf_metrics.m_batch_sizes.emplace_back(num_generated_tokens);
         }
 

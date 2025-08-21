@@ -93,6 +93,16 @@ MeanStdPair PerfMetrics::get_inference_duration() {
     return inference_duration;
 }
 
+MeanStdPair PerfMetrics::get_sample_duration() {
+    evaluate_statistics();
+    return sample_duration;
+}
+
+MeanStdPair PerfMetrics::get_schedule_duration() {
+    evaluate_statistics();
+    return schedule_duration;
+}
+
 std::map<std::string, float> PerfMetrics::get_grammar_compiler_init_times() {
     return grammar_compiler_init_times;
 }

@@ -41,6 +41,8 @@ struct OPENVINO_GENAI_EXPORTS RawPerfMetrics {
     std::vector<MicroSeconds> m_token_infer_durations;
     std::vector<size_t> m_batch_sizes;
     std::vector<MicroSeconds> m_durations;
+    std::vector<MicroSeconds> m_sample_durations;
+    std::vector<MicroSeconds> m_schedule_durations;
     std::vector<MicroSeconds> m_inference_durations;
 
     std::vector<MicroSeconds> m_grammar_compile_times;
@@ -126,6 +128,8 @@ struct OPENVINO_GENAI_EXPORTS PerfMetrics {
 
     MeanStdPair generate_duration;
     MeanStdPair inference_duration;
+    MeanStdPair sample_duration;
+    MeanStdPair schedule_duration;
     MeanStdPair tokenization_duration = {-1.0f, -1.0f};
     MeanStdPair detokenization_duration = {-1.0f, -1.0f};
 
@@ -147,6 +151,8 @@ struct OPENVINO_GENAI_EXPORTS PerfMetrics {
     MeanStdPair get_generate_duration();        // in ms
     MeanStdPair get_tokenization_duration();    // in ms
     MeanStdPair get_detokenization_duration();  // in ms
+    MeanStdPair get_sample_duration();       // in ms
+    MeanStdPair get_schedule_duration();       // in ms
 
     // Flag indicating if raw metrics were evaluated.
     // If false means current mean/std ttft, tpot, etc. are not actual
