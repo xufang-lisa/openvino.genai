@@ -88,7 +88,10 @@ int main(int argc, char* argv[]) try {
     if (sd_perf_metrics) {
         print_perf_metrics(sd_perf_metrics->main_model_metrics, "MAIN MODEL");
         std::cout << "  accepted token: " << sd_perf_metrics->get_num_accepted_tokens() << " tokens" << std::endl;
-        std::cout << "  compress rate: " << sd_perf_metrics->main_model_metrics.get_num_generated_tokens() / sd_perf_metrics->main_model_metrics.raw_metrics.m_durations.size() << std::endl;
+        std::cout << "  compress rate: "
+                  << sd_perf_metrics->main_model_metrics.get_num_generated_tokens() * 1.0f /
+                         sd_perf_metrics->main_model_metrics.raw_metrics.m_durations.size()
+                  << std::endl;
         print_perf_metrics(sd_perf_metrics->draft_model_metrics, "DRAFT MODEL");
     }
     std::cout << std::endl;
