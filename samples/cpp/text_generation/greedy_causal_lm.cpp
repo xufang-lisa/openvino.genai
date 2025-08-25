@@ -40,7 +40,8 @@ int main(int argc, char* argv[]) try {
     std::cout << "Output token size:" << metrics.get_num_generated_tokens() << std::endl;
     std::cout << "TTFT: " << metrics.get_ttft().mean  << " ± " << metrics.get_ttft().std << " ms" << std::endl;
     std::cout << "TPOT: " << metrics.get_tpot().mean  << " ± " << metrics.get_tpot().std << " ms/token " << std::endl;
-    std::cout << "Total iteration number:: " << metrics.raw_metrics.m_token_infer_durations.size() << std::endl;
+    std::cout << "Total iteration number: " << metrics.raw_metrics.m_token_infer_durations.size() << std::endl;
+    std::cout << "Input token size: " << metrics.get_num_input_tokens() << std::endl;
     // std::cout << result << std::endl;
 } catch (const std::exception& error) {
     try {

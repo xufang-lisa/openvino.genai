@@ -9,25 +9,33 @@
 #include "read_prompt_from_file.h"
 #include "openvino/genai/speculative_decoding/perf_metrics.hpp"
 
-
-void print_perf_metrics(ov::genai::SDPerfMetrics& perf_metrics, std::string model_name) {
+template <typename T>
+void print_perf_metrics(T& perf_metrics, std::string model_name) {
     std::cout << "\n" << model_name << std::endl;
     auto generation_duration = perf_metrics.get_generate_duration().mean;
     auto inference_duration = perf_metrics.get_inference_duration().mean;
     auto sample_duration = perf_metrics.get_sample_duration().mean;
     auto scheduler_duration = perf_metrics.get_schedule_duration().mean;
     std::cout << "  Generate time: " << generation_duration << " ms" << std::endl;
-    std::cout << "  Inference+sample+scheduler time: " << inference_duration << " ms("
-              << inference_duration * 100.0 / generation_duration << "%) + " << sample_duration << " ms("
-              << sample_duration * 100.0 / generation_duration << "%) + " << scheduler_duration
-              << " ms(" << scheduler_duration * 100.0 / generation_duration << "%)" << std::endl;
-    std::cout << "  TTFT: " << perf_metrics.get_ttft().mean << " ± " << perf_metrics.get_ttft().std
-                << " ms" << std::endl;
-    std::cout << "  TTST: " << perf_metrics.get_ttst().mean  << " ± " << perf_metrics.get_ttst().std << " ms/token " << std::endl;
-    std::cout << "  TPOT: " << perf_metrics.get_tpot().mean  << " ± " << perf_metrics.get_tpot().std << " ms/iteration " << std::endl;
-    std::cout << "  AVG Latency: " << perf_metrics.get_latency().mean  << " ± " << perf_metrics.get_latency().std << " ms/token " << std::endl;
+    if (inference_duration > 0 && sample_duration > 0 && scheduler_duration > 0) {
+        std::cout << "  Inference+sample+scheduler time: " << inference_duration << " ms("
+                  << inference_duration * 100.0 / generation_duration << "%) + " << sample_duration << " ms("
+                  << sample_duration * 100.0 / generation_duration << "%) + " << scheduler_duration << " ms("
+                  << scheduler_duration * 100.0 / generation_duration << "%)" << std::endl;
+    }
+    std::cout << "  TTFT: " << perf_metrics.get_ttft().mean << " ± " << perf_metrics.get_ttft().std << " ms"
+              << std::endl;
+    std::cout << "  TPOT: " << perf_metrics.get_tpot().mean << " ± " << perf_metrics.get_tpot().std << " ms/token"
+              << std::endl;
     std::cout << "  Num generated token: " << perf_metrics.get_num_generated_tokens() << " tokens" << std::endl;
-    std::cout << "  Total iteration number: " << perf_metrics.raw_metrics.m_durations.size() << std::endl;
+    if (model_name == "Total") {
+        std::cout << "  Total iteration number: " << perf_metrics.raw_metrics.m_new_token_times.size() << std::endl;
+    } else {
+        std::cout << "  Total iteration number: " << perf_metrics.raw_metrics.m_durations.size() << std::endl;
+    }
+    if (perf_metrics.get_num_input_tokens() > 0) {
+        std::cout << "  Input token size: " << perf_metrics.get_num_input_tokens() << std::endl;
+    }
 }
 
 int main(int argc, char* argv[]) try {
@@ -86,6 +94,7 @@ int main(int argc, char* argv[]) try {
 
     auto sd_perf_metrics = std::dynamic_pointer_cast<ov::genai::SDPerModelsPerfMetrics>(result.extended_perf_metrics);
     if (sd_perf_metrics) {
+        print_perf_metrics(result.perf_metrics, "Total");
         print_perf_metrics(sd_perf_metrics->main_model_metrics, "MAIN MODEL");
         std::cout << "  accepted token: " << sd_perf_metrics->get_num_accepted_tokens() << " tokens" << std::endl;
         std::cout << "  compress rate: "
