@@ -28,11 +28,12 @@ int main(int argc, char* argv[]) try {
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
     std::cout << "\nGeneration completed in " << duration.count() << " ms" << std::endl;
     ov::genai::PerfMetrics metrics = result.perf_metrics;
-    generation_duration = metrics.get_generate_duration().mean;
-    inference_duration = metrics.get_inference_duration().mean;
-    sample_duration = metrics.get_sample_duration().mean;
-    scheduler_duration = metrics.get_schedule_duration().mean;
-    std::cout << "  Inference+sample+scheduler time: " << inference_duration << " ms("
+    auto generation_duration = metrics.get_generate_duration().mean;
+    auto inference_duration = metrics.get_inference_duration().mean;
+    auto sample_duration = metrics.get_sample_duration().mean;
+    auto scheduler_duration = metrics.get_schedule_duration().mean;
+    std::cout << "Generate time: " << generation_duration << " ms" << std::endl;
+    std::cout << "Inference+sample+scheduler time: " << inference_duration << " ms("
             << inference_duration * 100.0 / generation_duration << "%) + " << sample_duration << " ms("
             << sample_duration * 100.0 / generation_duration << "%) + " << scheduler_duration
             << " ms(" << scheduler_duration * 100.0 / generation_duration << "%)" << std::endl;
