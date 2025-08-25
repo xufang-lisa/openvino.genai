@@ -403,6 +403,8 @@ ContinuousBatchingPipeline::ContinuousBatchingImpl::generate(const std::vector<o
     PerfMetrics perf_metrics;
     auto& raw_perf_counters = perf_metrics.raw_metrics;
     raw_perf_counters.m_inference_durations =  {{ MicroSeconds(0.0f) }};
+    raw_perf_counters.m_sample_durations =  {{ MicroSeconds(0.0f) }};
+    raw_perf_counters.m_schedule_durations =  {{ MicroSeconds(0.0f) }};
 
     // checks that all requests has the same LoRA adapters property value
     for (size_t i = 1; i < sampling_params.size(); ++i) {
@@ -437,6 +439,8 @@ ContinuousBatchingPipeline::ContinuousBatchingImpl::generate(const std::vector<o
             // During prefill step (or steps if max_batch_size < prompt_len) we don't generate new tokens,
             // but still inference took place, so we need to add this time to the total inference duration.
             raw_perf_counters.m_inference_durations[0] += MicroSeconds(m_pipeline_metrics.inference_duration);
+            raw_perf_counters.m_sample_durations[0] += MicroSeconds(m_pipeline_metrics.sample_duration);
+            raw_perf_counters.m_schedule_durations[0] += MicroSeconds(m_pipeline_metrics.schedule_duration);
             if (m_batch_size > 0) {
                 const auto infer_end = std::chrono::steady_clock::now();
                 const auto infer_ms = PerfMetrics::get_microsec(infer_end - infer_start);

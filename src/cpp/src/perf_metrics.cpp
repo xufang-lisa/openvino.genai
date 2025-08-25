@@ -159,6 +159,8 @@ void PerfMetrics::evaluate_statistics(std::optional<TimePoint> start_time) {
     tokenization_duration = calc_mean_and_std(raw_metrics.tokenization_durations);
     detokenization_duration = calc_mean_and_std(raw_metrics.detokenization_durations);
     inference_duration = calc_mean_and_std(raw_metrics.m_inference_durations);
+    sample_duration = calc_mean_and_std(raw_metrics.m_sample_durations);
+    schedule_duration = calc_mean_and_std(raw_metrics.m_schedule_durations);
 
     // tokens per second
     throughput = {1000.0f / tpot.mean, (tpot.std * 1000.0f) / (tpot.mean * tpot.mean)};
