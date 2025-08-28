@@ -728,6 +728,40 @@ Eagle2ValidationResult Sampler::validate_eagle2_tree(const std::vector<std::vect
         return result;
     }
     auto logit_shape = main_model_logits.get_shape();
+#if 1
+    std::map<size_t, size_t> main_results;
+    size_t seq_idx = 0;
+    for (size_t b = 0; b < logit_shape[0]; b++) {
+        main_results[b] = 0;
+    }
+
+    size_t max_count = 0;
+    size_t max_row = 0;
+    for (size_t s = logit_shape[1] -1; s > 0; --s) {
+        for (auto iter = main_results.begin(); iter != main_results.end();) {
+            size_t b = iter->first;
+            auto sample_token = _greedy_sample_with_batch_idx(main_model_logits, b, s);
+            if (sample_token.m_index != candidate_paths[b][logit_shape[1] - s - 1]) {
+                iter = main_results.erase(iter);
+            } else {
+                iter->second++;
+                iter++;
+            }
+        }
+        if (!main_results.empty()) {
+            max_row = main_results.begin()->first;
+            max_count = main_results.begin()->second;
+        } else {
+            break;
+        }
+    }
+
+    result.accepted_path_length = max_count;
+    auto num_tokens_to_process = candidate_paths[0].size();
+    result.extra_sampled_token = _greedy_sample_with_batch_idx(main_model_logits, beam_id[max_row], (num_tokens_to_process - max_count));
+    result.accepted_path_id = beam_id[max_row];
+    result.is_path_accepted = (result.accepted_path_length > 0);
+#else
     // find the tokens with maximum probability in the main model logits
     std::vector<std::vector<int64_t>> main_results(logit_shape[0], std::vector<int64_t>(0));
     for (size_t b = 0; b < logit_shape[0]; ++b) {
@@ -777,6 +811,7 @@ Eagle2ValidationResult Sampler::validate_eagle2_tree(const std::vector<std::vect
     result.extra_sampled_token = _greedy_sample_with_batch_idx(main_model_logits, beam_id[max_row], (num_tokens_to_process - max_count));
     result.accepted_path_id = beam_id[max_row];
     result.is_path_accepted = (result.accepted_path_length > 0);
+#endif
     return result;
     // Find the longest common prefix among all candidate paths
     /*size_t max_common_prefix = 0;
@@ -1075,7 +1110,7 @@ int Sampler::validate_eagle2_candidates(SequenceGroup::Ptr seq_group,
             OPENVINO_THROW("should not be here");
         } (running_sequence->get_id()));
     }
-    //std::cout << "candidate_tokens number : " << candidate_tokens.size() << "candidate token length: " << candidate_tokens[0].size() <<std::endl;
+    // std::cout << "candidate_tokens number : " << candidate_tokens.size() << "candidate token length: " << candidate_tokens[0].size() <<std::endl;
     auto validation_result = validate_eagle2_tree(candidate_tokens,
                                                   candidate_log_probs,
                                                   beam_idxs,
@@ -1083,7 +1118,7 @@ int Sampler::validate_eagle2_candidates(SequenceGroup::Ptr seq_group,
                                                   logit_processor,
                                                   do_sample);
     generated_tokens_count = validation_result.accepted_path_length;
-    //std::cout << "seq group" << seq_group->get_request_id() << " accepted: " << validation_result.accepted_path_length << std::endl;
+    // std::cout << "seq group" << seq_group->get_request_id() << " accepted: " << validation_result.accepted_path_length << std::endl;
 
     if (!validation_result.is_path_accepted) {
         // return false;
@@ -1141,7 +1176,7 @@ void Sampler::TopKSelector::tree_reset(SequenceGroup::Ptr& sequence_group) {
     Beam root_beam((*m_sequence_group)[0]);
     root_beam.m_score = 0.0f;
     m_eagle2_candidate_graph = std::make_shared<Eagle2CandidateGraph>(root_beam,
-                                                                        m_parameters.eagle_tree_params.total_tokens,
+                                                                        m_parameters.eagle_tree_params.total_tokens - 1,
                                                                         m_parameters.eagle_tree_params.tree_depth);
     m_beams.push_back(root_beam);
 
@@ -1234,9 +1269,7 @@ void Sampler::TopKSelector::finalize_eagle2_candidates(SamplerOutput& sampler_ou
             remaining_retrieve_indices.push_back(path);
         }
     }
-    if (remaining_retrieve_indices.size() + used_sequences.size() != retrieve_indices.size()) {
-        std::cout << "break" << std::endl;
-    }
+
     std::map<uint64_t, uint64_t> child_2_parent_map;;
     for (int i = 0; i < remaining_retrieve_indices.size(); ++i) {
         const auto& path = remaining_retrieve_indices[i];
