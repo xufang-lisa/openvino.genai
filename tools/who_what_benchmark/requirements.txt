@@ -25,3 +25,6 @@ vocos==0.1.0
 vector-quantize-pytorch==1.27.20
 torchaudio>=2.1.0,<=2.10.0
 torchvision>=0.16,<=0.25.0
+# For OpenGVLab/VideoChat-Flash-Qwen2_5-7B_InternVideo2-1B
+timm==1.0.25
+decord==0.6.0
