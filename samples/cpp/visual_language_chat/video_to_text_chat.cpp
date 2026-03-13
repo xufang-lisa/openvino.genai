@@ -101,12 +101,25 @@ int main(int argc, char* argv[]) try {
     std::getline(std::cin, prompt);
 
     history.push_back({{"role", "user"}, {"content", std::move(prompt)}});
-    ov::genai::VLMDecodedResults decoded_results = pipe.generate(
-        history,
-        ov::genai::videos(videos),
-        ov::genai::generation_config(generation_config),
-        ov::genai::streamer(print_subword)
-    );
+
+    std::string model_lower = argv[1];
+    std::transform(model_lower.begin(), model_lower.end(), model_lower.begin(), ::tolower);
+
+    ov::genai::VLMDecodedResults decoded_results;
+    if (model_lower.find("videochat") != std::string::npos) {
+        decoded_results = pipe.generate(
+            prompt,
+            ov::genai::videos(videos),
+            ov::genai::generation_config(generation_config),
+            ov::genai::streamer(print_subword));
+    } else {
+        decoded_results = pipe.generate(
+            history,
+            ov::genai::videos(videos),
+            ov::genai::generation_config(generation_config),
+            ov::genai::streamer(print_subword));
+    }
+
     history.push_back({{"role", "assistant"}, {"content", std::move(decoded_results.texts[0])}});
     std::cout << "\n----------\n"
         "question:\n";

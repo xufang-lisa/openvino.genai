@@ -89,7 +89,11 @@ def main():
     history = openvino_genai.ChatHistory()
     prompt = input("question:\n")
     history.append({"role": "user", "content": prompt})
-    decoded_results = pipe.generate(history, videos=videos, generation_config=config, streamer=streamer)
+
+    if "videochat" in args.model_dir.lower():
+        decoded_results = pipe.generate(prompt, videos=videos, generation_config=config, streamer=streamer)
+    else:
+        decoded_results = pipe.generate(history, videos=videos, generation_config=config, streamer=streamer)
     history.append({"role": "assistant", "content": decoded_results.texts[0]})
 
     while True:
