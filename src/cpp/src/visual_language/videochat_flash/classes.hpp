@@ -38,20 +38,12 @@ public:
         return m_ireq_queue_vision_projection->get();
     }
 
-    CircularBufferQueueElementGuard<ov::InferRequest> get_merge_model() {
-        OPENVINO_ASSERT(m_ireq_queue_merge_model, "Vision merge infer request queue is not initialized");
-        return m_ireq_queue_merge_model->get();
-    }
-
     const ov::Tensor& get_pos_emb() const {
         return m_pos_emb;
     }
 protected:
     /// @brief  Infer requests queue for video projection model.
     std::unique_ptr<CircularBufferQueue<ov::InferRequest>> m_ireq_queue_vision_projection;
-
-    /// @brief Infer requests queue for vision merge model.
-    std::unique_ptr<CircularBufferQueue<ov::InferRequest>> m_ireq_queue_merge_model;
 
     /// @brief A config to follow.
     VLMConfig m_vlm_config;

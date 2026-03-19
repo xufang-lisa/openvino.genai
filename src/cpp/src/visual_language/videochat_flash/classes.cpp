@@ -208,148 +208,6 @@ ov::Tensor remove_second_dim_first_element(const ov::Tensor& input) {
     return output;
 }
 
-std::shared_ptr<ov::Model> build_bipartite_soft_matching_merge_opt_model(int dim, ov::element::Type dtype = ov::element::f32) {
-    // Parameters: x: [B, P, C], size: [B, P, 1]
-    auto x_p = std::make_shared<ov::op::v0::Parameter>(dtype, ov::PartialShape({-1, -1, -1}));
-    x_p->set_friendly_name("hidden_states");
-    x_p->output(0).set_names({"hidden_states"});
-    auto size_p = std::make_shared<ov::op::v0::Parameter>(dtype, ov::PartialShape({-1, -1, 1}));
-    size_p->set_friendly_name("size");
-    size_p->output(0).set_names({"size"});
-
-    // Metric Calculation
-    // metric4d = x.reshape(0, 0, -1, dim)
-    auto reshape_pat = std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{4}, std::vector<int64_t>{0, 0, -1, dim});
-    auto metric4d = std::make_shared<ov::op::v1::Reshape>(x_p, reshape_pat, true);
-
-    // metric = reduce_mean(metric4d, axis=2) -> [B, P, dim]
-    auto axis_2 = std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{1}, std::vector<int64_t>{2});
-    auto metric = std::make_shared<ov::op::v1::ReduceMean>(metric4d, axis_2, false);
-
-    // L2 Normalization
-    // metric_n = metric / sqrt(sum(metric^2))
-    auto metric_sq = std::make_shared<ov::op::v1::Multiply>(metric, metric);
-    auto axis_neg1 = std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{1}, std::vector<int64_t>{-1});
-    auto metric_ss = std::make_shared<ov::op::v1::ReduceSum>(metric_sq, axis_neg1, true);
-    auto metric_norm = std::make_shared<ov::op::v0::Sqrt>(metric_ss);
-    auto metric_n = std::make_shared<ov::op::v1::Divide>(metric, metric_norm);
-
-    // Bipartite Indices (Even/Odd)
-    auto shape_x = std::make_shared<ov::op::v3::ShapeOf>(x_p, ov::element::i64);
-    auto axis_0 = std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{1}, std::vector<int64_t>{0});
-    auto p_node = std::make_shared<ov::op::v1::Gather>(shape_x,
-                                                       std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{}, std::vector<int64_t>{1}),
-                                                       axis_0);
-
-    // range(0, p, 2) and range(1, p, 2)
-    auto const_0 = std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{}, std::vector<int64_t>{0});
-    auto const_1 = std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{}, std::vector<int64_t>{1});
-    auto const_2 = std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{}, std::vector<int64_t>{2});
-
-    auto idx_even = std::make_shared<ov::op::v4::Range>(const_0, p_node, const_2, ov::element::i64);
-    auto idx_odd = std::make_shared<ov::op::v4::Range>(const_1, p_node, const_2, ov::element::i64);
-
-    // Scoring & Matching
-    auto axis_p = std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{1}, std::vector<int64_t>{1});
-    auto a = std::make_shared<ov::op::v1::Gather>(metric_n, idx_even, axis_p); // [B, P/2, dim]
-    auto b = std::make_shared<ov::op::v1::Gather>(metric_n, idx_odd, axis_p);  // [B, P/2, dim]
-
-    // scores = a @ b.T -> [B, P/2, P/2]
-    auto b_t = std::make_shared<ov::op::v1::Transpose>(b, std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{3}, std::vector<int64_t>{0, 2, 1}));
-    auto scores = std::make_shared<ov::op::v0::MatMul>(a, b_t, false, false);
-
-    // TopK to get ArgMax (k=1)
-    auto topk = std::make_shared<ov::op::v1::TopK>(scores,
-                                                   std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{}, std::vector<int64_t>{1}),
-                                                   2, // axis
-                                                   ov::op::v1::TopK::Mode::MAX,
-                                                   ov::op::v1::TopK::SortType::SORT_VALUES,
-                                                   ov::element::i64);
-    auto node_idx = std::make_shared<ov::op::v0::Squeeze>(topk->output(1),
-                                                          std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{1}, std::vector<int64_t>{2}));
-
-    // Merge Subgraph Logic
-    auto merge_subgraph = [&](ov::Output<ov::Node> data_3d) {
-        auto src = std::make_shared<ov::op::v1::Gather>(data_3d, idx_even, axis_p);
-        auto dst = std::make_shared<ov::op::v1::Gather>(data_3d, idx_odd, axis_p);
-
-        // Broadcast node_idx to [B, P/2, C]
-        auto idx_u = std::make_shared<ov::op::v0::Unsqueeze>(node_idx,
-                                                             std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{1}, std::vector<int64_t>{-1}));
-        auto src_shape = std::make_shared<ov::op::v3::ShapeOf>(src, ov::element::i64);
-        auto idx_b = std::make_shared<ov::op::v1::Broadcast>(idx_u, src_shape);
-
-        auto merged = std::make_shared<ov::op::v12::ScatterElementsUpdate>(
-            dst, idx_b, src, const_1, ov::op::v12::ScatterElementsUpdate::Reduction::SUM
-        );
-        return merged;
-    };
-
-    // Final Weighted Merge
-    auto x_weighted = std::make_shared<ov::op::v1::Multiply>(x_p, size_p);
-    auto x_m = merge_subgraph(x_weighted);
-    auto size_m = merge_subgraph(size_p);
-    auto x_out = std::make_shared<ov::op::v1::Divide>(x_m, size_m);
-
-    // Construct Model
-    x_out->set_friendly_name("x_out");
-    size_m->set_friendly_name("size_out");
-
-    return std::make_shared<ov::Model>(ov::OutputVector{x_out, size_m}, ov::ParameterVector{x_p, size_p}, "bipartite_merge_opt");
-}
-
-ov::Tensor merge_tokens(const ov::Tensor& input, ov::InferRequest& merge_embeddings, const size_t target_num_token = 64) {
-    const ov::Shape& x_shape = input.get_shape();
-    OPENVINO_ASSERT(
-        x_shape.size() == 3,
-        "x must be 3D tensor [batch, tokens, channels], got ", x_shape.size(), "D."
-    );
-
-    const size_t b = x_shape[0];
-    const size_t p = x_shape[1];
-    const size_t c = x_shape[2];
-
-    OPENVINO_ASSERT(
-        p > target_num_token,
-        "Current tokens (", p, ") must be greater than target (", target_num_token, ")."
-    );
-    OPENVINO_ASSERT(
-        p % 2 == 0,
-        "Bipartite merge requires an even token count. Got tokens=", p, "."
-    );
-
-    const ov::Shape size_shape = {b, p, 1};
-    ov::Tensor size_tensor(ov::element::f32, size_shape);
-    float* size_data = size_tensor.data<float>();
-    const size_t num_elements = size_tensor.get_size();
-    std::fill(size_data, size_data + num_elements, 1.0f);
-
-    ov::Tensor current_x = input;
-
-    // Simplified: iterate until token count reaches target.
-    size_t tmp_p = p;
-    while (tmp_p > target_num_token) {
-        merge_embeddings.set_tensor("hidden_states", current_x);
-        merge_embeddings.set_tensor("size", size_tensor);
-        merge_embeddings.infer();
-
-        current_x = merge_embeddings.get_output_tensor(0);
-        size_tensor = merge_embeddings.get_output_tensor(1);
-
-        tmp_p = std::max(target_num_token, tmp_p / 2);
-    }
-
-    const ov::Shape& final_shape = current_x.get_shape();
-    const ov::Shape expected_shape = {b, target_num_token, c};
-    OPENVINO_ASSERT(
-        final_shape == expected_shape,
-        "Merge failed: expected shape ", expected_shape.to_string(),
-        ", got ", final_shape.to_string()
-    );
-
-    return current_x;
-}
-
 ov::Tensor efficient_flatten(const ov::Tensor& original_tensor) {
     // flatten 3D tensor [N,C,W] to 3D tensor [1, N*C, W]
     const ov::Shape& original_shape = original_tensor.get_shape();
@@ -561,15 +419,6 @@ VisionEncoderVideoChatFlashQwen::VisionEncoderVideoChatFlashQwen(
         "mm_hidden_size must be divisible by num_attention_heads for VideoChat-Flash merge model. Got mm_hidden_size=",
         m_vlm_config.mm_hidden_size, ", num_attention_heads=", num_attention_heads, "."
     );
-    const size_t merge_dim = m_vlm_config.mm_hidden_size / num_attention_heads;
-    auto merge_model = build_bipartite_soft_matching_merge_opt_model(merge_dim);
-    auto compiled_merge_model = utils::singleton_core().compile_model(merge_model, "CPU", {});
-    m_ireq_queue_merge_model = std::make_unique<CircularBufferQueue<ov::InferRequest>>(
-        compiled_merge_model.get_property(ov::optimal_number_of_infer_requests),
-        [&compiled_merge_model]() -> ov::InferRequest {
-            return compiled_merge_model.create_infer_request();
-        });
-    
 }
 
 VisionEncoderVideoChatFlashQwen::VisionEncoderVideoChatFlashQwen(
@@ -593,14 +442,7 @@ VisionEncoderVideoChatFlashQwen::VisionEncoderVideoChatFlashQwen(
         "mm_hidden_size must be divisible by 16 for VideoChat-Flash merge model. Got mm_hidden_size=",
         m_vlm_config.mm_hidden_size
     );
-    const auto merge_dim = m_vlm_config.mm_hidden_size / num_attention_heads;
-    auto merge_model = build_bipartite_soft_matching_merge_opt_model(merge_dim);
-    auto compiled_merge_model = utils::singleton_core().compile_model(merge_model, "CPU", {});
-    m_ireq_queue_merge_model = std::make_unique<CircularBufferQueue<ov::InferRequest>>(
-        compiled_merge_model.get_property(ov::optimal_number_of_infer_requests),
-        [&compiled_merge_model]() -> ov::InferRequest {
-            return compiled_merge_model.create_infer_request();
-        });
+
     // init 3d_sincos_pos_embed
     const size_t mm_hidden_size = m_vlm_config.mm_hidden_size;
     const size_t mm_local_num_frames = m_vlm_config.mm_local_num_frames;
@@ -621,14 +463,12 @@ EncodedImage VisionEncoderVideoChatFlashQwen::encode(const ov::Tensor& image, co
 ov::Tensor infer_visual_features(
     const ov::Tensor& transpose_features,
     ov::InferRequest& vision_embeddings,
-    ov::InferRequest& merge_embeddings,
     ov::InferRequest& vision_projection,
     const ov::Tensor& pos_emb
 ) {
     ov::Tensor processed_vision_embeds = cyclic_vit_infer(transpose_features, vision_embeddings, pos_emb);
     ov::Tensor clipped_vision_embeds = remove_second_dim_first_element(processed_vision_embeds);
-    ov::Tensor merged_vision_features = merge_tokens(clipped_vision_embeds, merge_embeddings);
-    vision_projection.set_tensor("hidden_states", merged_vision_features);
+    vision_projection.set_tensor("hidden_states", clipped_vision_embeds);
     vision_projection.infer();
     ov::Tensor proj_features = vision_projection.get_output_tensor();
 
@@ -649,17 +489,15 @@ std::vector<ov::genai::EncodedVideo> InputsEmbedderVideoChatFlashQwen::encode_vi
         const size_t mm_local_num_frames =  m_vlm_config.mm_local_num_frames;
         auto transpose_features = transpose_video_features(preprocessed_video, mm_local_num_frames);
         CircularBufferQueueElementGuard<ov::InferRequest> vision_guard(vision_encoder->get_vision_encoder());
-        CircularBufferQueueElementGuard<ov::InferRequest> merge_guard(vision_encoder->get_merge_model());
         CircularBufferQueueElementGuard<ov::InferRequest> projection_guard(vision_encoder->get_vision_projection());
 
         auto final_features = infer_visual_features(
             transpose_features,
             vision_guard.get(),
-            merge_guard.get(),
             projection_guard.get(),
             vision_encoder->get_pos_emb()
         );
-        
+
         encoded_video.video_features = final_features;
         encoded_video.num_video_tokens = final_features.get_shape()[1];
         embeds.emplace_back(std::move(encoded_video));
