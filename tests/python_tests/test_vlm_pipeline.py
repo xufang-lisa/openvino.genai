@@ -2003,7 +2003,7 @@ def run_compare_genai_optimum(ov_pipe_model: VlmModelInfo, image, video):
         optimum_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True).strip()
     elif optimum_model.config.model_type == "videochat_flash_qwen":
         assert tokenizer is not None, "Tokenizer should be set for videochat_flash_qwen models."
-        optimum_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True).strip()
+        optimum_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
     else:
         optimum_output = processor.batch_decode(
             generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
@@ -2075,9 +2075,7 @@ OPTIMUM_VS_GENAI_MODEL_EXPECTED_FAIL_CASES = {
     # minicpmv-2_6 cases with images
     "*tiny-random-minicpmv-2_6/*/image*": "CVS-180070",
     # videochat_flash_qwen text-only cases
-    "*tiny-videochat-flash-qwen/*/text-only": "CVS-183813",
-    # videochat_flash_qwen video cases
-    "*tiny-videochat-flash-qwen/*/video*": "CVS-183813",
+    "*tiny-videochat-flash-qwen/PA/CPP/text-only": "CVS-183813",
 }
 
 # For these models, we will add both CPP and GRAPH pre-processing tests.
