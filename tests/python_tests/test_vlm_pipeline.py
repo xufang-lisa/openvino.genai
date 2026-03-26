@@ -262,12 +262,12 @@ def is_optimum_intel_version_for_videochat_flash_qwen():
     contains the expected commit prefix required for tiny-videochat-flash-qwen
     tests.
 
-    Example accepted version: ``1.27.0.dev0+70056d0``.
+    Example accepted version: ``1.27.0.dev0+60c9a4b``.
     """
     import importlib.metadata as metadata
     from importlib.metadata import PackageNotFoundError
 
-    expected_commit_prefix = "c7245a6"
+    expected_commit_prefix = "60c9a4b"
 
     try:
         _optimum_intel_version = metadata.version("optimum-intel")
@@ -314,7 +314,7 @@ def _get_ov_model(model_id: str) -> str:
         )
     if _is_videochat_flash_qwen_model(model_id) and not is_optimum_intel_version_for_videochat_flash_qwen():
         pytest.skip(
-            "ValueError: The current version of optimum-intel does not allow for the export of the model. Supported version is 1.27.0.dev0+70056d0."
+            "ValueError: The current version of optimum-intel does not allow for the export of the model. Supported version is 1.27.0.dev0+60c9a4b."
         )
 
     _maybe_patch_pyav_for_videochat_flash_qwen(model_id)
@@ -2075,9 +2075,9 @@ OPTIMUM_VS_GENAI_MODEL_EXPECTED_FAIL_CASES = {
     # minicpmv-2_6 cases with images
     "*tiny-random-minicpmv-2_6/*/image*": "CVS-180070",
     # videochat_flash_qwen text-only cases
-    "*tiny-videochat-flash-qwen/*/text-only": "CVS-xxxxxx",
+    "*tiny-videochat-flash-qwen/*/text-only": "CVS-183813",
     # videochat_flash_qwen video cases
-    "*tiny-videochat-flash-qwen/*/video*": "CVS-xxxxxx",
+    "*tiny-videochat-flash-qwen/*/video*": "CVS-183813",
 }
 
 # For these models, we will add both CPP and GRAPH pre-processing tests.
