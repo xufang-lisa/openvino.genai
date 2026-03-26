@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2025 Intel Corporation
+// Copyright (C) 2023-2026 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #pragma once
@@ -13,46 +13,37 @@
 
 namespace ov::genai {
 
-namespace videochat_flash_utils {
-    ov::Tensor transpose_video_features(const ov::Tensor& src_tensor, const size_t mm_local_num_frames);
-    ov::Tensor preprocess(const ov::Tensor& input_nhwc_u8,
-                                    const size_t target_h = 224,
-                                    const size_t target_w = 224,
-                                    const std::array<float, 3>& image_mean = {0.485f, 0.456f, 0.406f},
-                                    const std::array<float, 3>& image_std = {0.229f, 0.224f, 0.225f});
-}
-
-class VisionEncoderVideoChat_Flash : public VisionEncoder {
+class VisionEncoderVideoChatFlashQwen : public VisionEncoder {
 public:
-    VisionEncoderVideoChat_Flash(
+    struct StaticConfig {
+        // Can not obtain this from config for now.
+        static constexpr size_t image_size = 224;
+        static constexpr size_t patch_size = 14;
+        static constexpr size_t num_attention_heads = 16;
+        static constexpr std::array<float, 3> image_mean = {0.485f, 0.456f, 0.406f};
+        static constexpr std::array<float, 3> image_std = {0.229f, 0.224f, 0.225f};
+
+        static constexpr size_t get_grid_size() {
+            return image_size / patch_size;
+        }
+    };
+
+    VisionEncoderVideoChatFlashQwen(
         const std::filesystem::path& model_dir,
         const std::string& device,
         const ov::AnyMap properties);
 
-    VisionEncoderVideoChat_Flash(
+    VisionEncoderVideoChatFlashQwen(
         const ModelsMap& models_map,
         const std::filesystem::path& config_dir_path,
         const std::string& device,
         const ov::AnyMap properties);
 
     EncodedImage encode(const ov::Tensor& image, const ov::AnyMap& config_map) override;
-    
-    CircularBufferQueueElementGuard<ov::InferRequest> get_vision_encoder() {
-        return m_ireq_queue_vision_encoder.get();
-    }
+    EncodedVideo encode_video(const ov::Tensor& video);
 
-    CircularBufferQueueElementGuard<ov::InferRequest> get_vision_projection() {
-        return m_ireq_queue_vision_projection.get();
-    }
-
-    CircularBufferQueueElementGuard<ov::InferRequest> get_merge_model() {
-        return m_ireq_queue_merge_model.get();
-    }
-
-    size_t get_mm_local_num_frames() const {
-        return m_vlm_config.mm_local_num_frames;
-    }
 protected:
+
     /// @brief  Infer requests queue for video projection model.
     std::unique_ptr<CircularBufferQueue<ov::InferRequest>> m_ireq_queue_vision_projection;
 
@@ -61,18 +52,29 @@ protected:
 
     /// @brief A config to follow.
     VLMConfig m_vlm_config;
+
+    /// @brief pos_emb Tensor.
+    ov::Tensor m_pos_emb;
+
+private:
+    /// @brief Pads frames if frame count is not divisible by mm_local_num_frames.
+    ov::Tensor sample_video_if_needed(const ov::Tensor& video) const;
+    /// @brief Initializes 3D sin-cos positional embedding tensor for vision encoder input.
+    void initialize_positional_embedding();
+    /// @brief Builds and prepares infer request queue for token merge model.
+    void initialize_merge_model_queue();
 };
 
-class InputsEmbedderVideoChat_Flash : public InputsEmbedder::IInputsEmbedder {
+class InputsEmbedderVideoChatFlashQwen : public InputsEmbedder::IInputsEmbedder {
 public:
-    InputsEmbedderVideoChat_Flash(
+    InputsEmbedderVideoChatFlashQwen(
         const VLMConfig& vlm_config,
         const std::filesystem::path& model_dir,
         const std::string& device,
         const ov::AnyMap device_config
     );
 
-    InputsEmbedderVideoChat_Flash(
+    InputsEmbedderVideoChatFlashQwen(
         const VLMConfig& vlm_config,
         const ModelsMap& models_map,
         const Tokenizer& tokenizer,
