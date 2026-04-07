@@ -317,6 +317,11 @@ private:
                 // and total "scheduled capacity"
                 num_scheduled_tokens = std::min(num_scheduled_tokens, available_slots + num_scheduled_blocks * block_size);
 
+                std::cout << "    [schedule] sequence group " << sequence_group_id
+                << " max_num_batched_tokens=" << m_config.max_num_batched_tokens
+                << " num_available_tokens=" << num_available_tokens
+                << " num_scheduled_tokens=" << num_scheduled_tokens << std::endl;
+
                 if (num_scheduled_tokens > 0) {
                     // allocate KV blocks if required
                     if (num_scheduled_blocks > 0)
@@ -383,6 +388,11 @@ private:
 
                 size_t num_scheduled_tokens_per_seq = std::min(available_tokens_per_seq_in_megabatch, num_available_tokens_per_seq);
                 sequence_group->schedule_tokens(num_scheduled_tokens_per_seq);
+
+                std::cout << "    [schedule] sequence group " << sequence_group_id
+                << " max_num_batched_tokens=" << m_config.max_num_batched_tokens
+                << " num_available_tokens_per_seq=" << num_available_tokens_per_seq
+                << " num_scheduled_tokens_per_seq=" << num_scheduled_tokens_per_seq << std::endl;
 
                 while (!m_block_manager->can_append_slots(sequence_group)){
                     if (!_try_increase_cache()) {
@@ -471,7 +481,10 @@ private:
                 // TODO: better handling
                 // e.g. return status that sequence is ignored and cannot be processed by current scheduling algorigthm
                 OPENVINO_ASSERT(m_config.max_num_batched_tokens >= sequence_len, "Sequence length (", sequence_len, ") is longer than max number of tokens in batch (", m_config.max_num_batched_tokens, ")");
-
+                std::cout << "    [schedule] sequence group " << sequence_group_id << " max_num_batched_tokens=" << m_config.max_num_batched_tokens
+                << " num_available_tokens=" << sequence_len << std::endl;
+                std::cout << "    [schedule] sequence group " << sequence_group_id << " max_num_batched_tokens=" << m_config.max_num_batched_tokens
+                << " num_available_tokens=" << sequence_len << std::endl;
                 // if we limited by max_num_seqs condition
                 if (num_running_sequence_groups >= m_config.max_num_seqs)
                     break;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <atomic>
+#include <iostream>
 #include <thread>
 #include <optional>
 #include "openvino/genai/cache_eviction.hpp"
@@ -427,6 +428,18 @@ void ContinuousBatchingPipeline::ContinuousBatchingImpl::step() {
         sampler_output = m_sampler->sample(m_requests, logits, m_is_validation_mode_enabled);
         m_batch_size = sampler_output.num_generated_tokens;
         timer.end();
+    }
+
+    // Print generated IDs for each running request
+    for (const auto& request : m_requests) {
+        // if (!request->is_scheduled()) continue;
+        std::cout << "    [sample] Request " << request->get_request_id() << " running sequences:\n";
+        for (const auto& seq : request->get_running_sequences()) {
+            const auto& gen_ids = seq->get_generated_ids();
+            std::cout << "      Seq " << seq->get_id() << " generated_ids [" << gen_ids.size() << "]: ";
+            for (auto id : gen_ids) std::cout << id << " ";
+            std::cout << "\n";
+        }
     }
 
     // process sampler_output (e.g. fork or drop sequences from BlockScheduler)

@@ -75,11 +75,16 @@ std::vector<EncodedGenerationResult> generate_common(
 
     auto all_requests = self->get_awaiting_requests();
     GenerationHandle& generation = main_generations.at(0);
+    int step_num = 0;
 
     streamer_ptr->start();
     while (self->has_non_finished_requests()) {
         try {
+            step_num++;
+            std::cout << "Start Step " << step_num << std::endl;
             self->step();
+            std::cout << "End Step " << step_num << std::endl;
+            std::cout << std::endl;
         } catch (...) {
             self->drop_requests();
             streamer_ptr->end();

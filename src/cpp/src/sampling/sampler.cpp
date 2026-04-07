@@ -1019,6 +1019,7 @@ SamplerOutput Sampler::sample(const std::vector<SequenceGroup::Ptr> & sequence_g
             logit_processor.update_generated_len(min_processed_tokens);
         }
         if (assisting_pipeline_info.updated_validation_len) {
+            std::cout << "set_num_validated_tokens debug1" << std::endl;
             sequence_group->set_num_validated_tokens(assisting_pipeline_info.updated_validation_len);
         }
     }

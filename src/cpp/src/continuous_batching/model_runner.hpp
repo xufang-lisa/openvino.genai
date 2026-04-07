@@ -495,6 +495,8 @@ public:
                     num_running_sequences
                 );
             }
+            std::cout << "    [forward] sequence group " << seq_group_id << " with " << num_running_sequences
+                      << " running sequences, scheduling " << num_scheduled_tokens << " tokens:" << std::endl;
 
             for (size_t seq_idx = 0; seq_idx < num_running_sequences; ++seq_idx) {
                 if (sequence_group_type == SequenceGroupType::EMBEDDINGS) {
@@ -568,6 +570,7 @@ public:
                         }
                     }
                 }
+                std::cout << "      Seq " << sequence->get_id() << " input_ids: ";
                 for (size_t token_id = 0, position_id = group_position_id; token_id < num_scheduled_tokens; ++token_id, ++position_id, ++gathering_current_index) {
                     // compute token for current sequence
                     if (sequence_group_type == SequenceGroupType::TOKENS) {
@@ -575,6 +578,7 @@ public:
                             sequence_group->get_prompt_ids()[position_id] :
                             sequence->get_generated_ids()[position_id - prompt_len];
                         position_ids_data[position_ids_idx] = position_id;
+                        std::cout << input_ids_data[token_id] << " ";
                     } else if (sequence_group_type == SequenceGroupType::EMBEDDINGS) {
                         const auto& generated_embeds = sequence->get_generated_ids_embeds();
                         const float* src = position_id < prompt_len ? sequence_group->get_input_embeds()[position_id].data() :  generated_embeds[position_id - prompt_len].data();
@@ -603,6 +607,8 @@ public:
                     }
                     position_ids_idx++;
                 }
+                std::cout << std::endl;
+
 
                 size_t num_blocks = sequence_group->get_num_logical_blocks();
                 size_t expected_kv_cache_size = sequence_group->get_num_processed_tokens() - sequence_group->get_num_evicted_tokens();

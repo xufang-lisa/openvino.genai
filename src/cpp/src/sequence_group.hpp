@@ -480,6 +480,7 @@ public:
 
     // a sequence group can generate new tokens if it already processed m_max_content_len before
     bool can_generate_tokens() const {
+        std::cout << "[can_generate_tokens] m_max_content_len: " << m_max_content_len << ", m_num_validation_tokens: " << m_num_validation_tokens << ", get_prompt_len(): " << get_prompt_len() << ", m_is_gen_paused: " << m_is_gen_paused << std::endl;
         return m_max_content_len + m_num_validation_tokens >= get_prompt_len() && !m_is_gen_paused;
     }
 
@@ -660,6 +661,7 @@ public:
     }
 
     bool requires_sampling() const {
+        // std::cout << "context_len=" << get_context_len() << " prompt_len=" << get_prompt_len() << " max_content_len=" << m_max_content_len << " max_new_tokens=" << get_max_new_tokens() << std::endl;
         return get_context_len() >= get_prompt_len() && get_context_len() > m_max_content_len && get_max_new_tokens() > 0;
     }
 
@@ -698,6 +700,7 @@ public:
         OPENVINO_ASSERT(get_num_scheduled_tokens() == 0, "Internal error: this function cannot be called when we are already in scheduling phase");
         // if sequence group has not finished, it has at least one token to process
         size_t num_available_tokens = std::max(get_prompt_len(), m_max_content_len);
+        std::cout << "[get_num_available_tokens_for_batching] num_available_tokens: " << num_available_tokens << ", m_num_processed_tokens: " << m_num_processed_tokens << ", m_num_validation_tokens: " << m_num_validation_tokens << std::endl;
         return std::max<size_t>(num_available_tokens - m_num_processed_tokens, 1u) + m_num_validation_tokens;
     }
 

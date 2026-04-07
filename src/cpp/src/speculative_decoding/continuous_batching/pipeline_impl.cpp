@@ -143,6 +143,7 @@ remove_tokens_from_sequence(Sequence::Ptr& sequence,
         logit_proccessor.decrease_generated_token_occurance(generated_token_ids[i]);
     }
     sequence->remove_last_tokens(removed_token_cnt);
+    std::cout << "Removed " << removed_token_cnt << " tokens from sequence " << sequence->get_id() << std::endl;
     return (sequence_generated_len - min_generated_tokens);
 }
 
@@ -267,6 +268,7 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::update
         size_t min_generated_tokens, min_candidate_len;
         int num_tokens_needs_kv_update = -1;
         if (running_sequences.front()->get_generated_len() == 0 && !request->get_num_tokens_to_validate()) {
+            std::cout << "Initializing request " << request_id << " by candidate." << std::endl;
             m_sampler->create_logit_processor(request_id, request->get_sampling_parameters(), request->get_prompt_ids());
             auto& logit_processor = m_sampler->get_logit_processor(request_id);
             result.inserted_tokens_cnt = init_request(request, candidates, logit_processor, is_update_logit_processor);
@@ -279,6 +281,7 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::update
             }
         } else {
             // update existing sequences by the candidates
+            std::cout << "Updating request " << request_id << " by candidate." << std::endl;
             auto& logit_processor = m_sampler->get_logit_processor(request_id);
             std::tie(min_generated_tokens, min_candidate_len) = get_prefix_len(running_sequences, candidates);
 
@@ -333,7 +336,9 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::update
         }
         if (num_tokens_needs_kv_update < 0 && result.inserted_tokens_cnt > 0 && result.removed_tokens_cnt == 0) {
             request->set_num_validated_tokens(result.inserted_tokens_cnt);
+            std::cout << "set_num_validated_tokens debug2" << std::endl;
         } else if (num_tokens_needs_kv_update >= 0) {
+            std::cout << "set_num_validated_tokens debug3" << std::endl;
             request->set_num_validated_tokens(num_tokens_needs_kv_update);  // in generation stage
         }
         // To ensure that `draft model` and `main model` process the same chunks.
@@ -356,10 +361,12 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::update
                 pause_gen_status = true;
             }
             request->pause_generation(pause_gen_status);
+            std::cout << "    [update_request] draft Request " << request_id << ", pause_generation=" << pause_gen_status << std::endl;
         } else {
             // Pause `main model` generation when other requests have not yet completed prefill.
             // Start `main model` generation when all requests have completed prefill.
             request->pause_generation(pause_gen_status);
+            std::cout << "    [update_request] main Request " << request_id << ", pause_generation=" << pause_gen_status << std::endl;
         }
         break;
     }
@@ -379,6 +386,7 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::pull_a
     std::lock_guard<std::mutex> lock{m_awaiting_requests_mutex};
     if (is_pause_request) {
         for (auto& awaiting_request : m_awaiting_requests) {
+            std::cout << "pause_generation for awaiting request " << awaiting_request->get_request_id() << std::endl;
             awaiting_request->pause_generation(true);
         }
     }
@@ -395,7 +403,9 @@ void ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::m
         generated_tokens_cnt++;
 
         const auto step_start = std::chrono::steady_clock::now();
+        std::cout << "  Draft Step " << generated_tokens_cnt << " start" << std::endl;
         step();
+        std::cout << "  Draft Step " << generated_tokens_cnt << " end" << std::endl;
         const auto step_end = std::chrono::steady_clock::now();
         const auto generation_duration = PerfMetrics::get_microsec(step_end - step_start);
 
@@ -411,6 +421,8 @@ void ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::m
             m_model_runner->enable_hidden_state_import(false);
         for (auto& request : m_requests) {
             const auto& sampling_params = request->get_sampling_parameters();
+            std::cout << "    multistep Request " << request->get_request_id() << ": num_processed_tokens=" << request->get_num_processed_tokens() << ", prompt_len=" << request->get_prompt_len() << ", max_new_tokens=" << request->get_max_new_tokens() << std::endl;
+
             if (!sampling_params.is_assisting_generation()) {
                 // generate only one token in case of non speculative decoding
                 request->pause_generation(true);
@@ -428,6 +440,7 @@ void ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::m
             } else if (is_stop_token_id_hit_in_sequence_group(request, sampling_params.stop_token_ids)) {
                 request->pause_generation(true);
             }
+
             // To prevent `draft model` from processing chunks that the main model has not yet processed.
             // Draft model will begin to execute multiple times after all the chunks of every prompts have been processed.
             to_generate &= request->can_generate_tokens();
