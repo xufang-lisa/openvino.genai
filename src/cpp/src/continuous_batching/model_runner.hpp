@@ -227,6 +227,8 @@ class ModelRunner {
     // a container which uses sequence group id and request id as key to store hidden states
     std::map<SequenceKey, HiddenStateRange> m_sequence_hidden_state_mapping;
     std::unordered_map<size_t, ov::Tensor> m_initial_hidden_states; // shape: [N, seq_len, hidden_size]
+    // Shared between main/draft model runners so draft can consume prompt hidden states exported by main.
+    inline static std::unordered_map<size_t, ov::Tensor> s_prompt_hidden_state_cache; // shape: [prompt_len, 1, hidden_size]
 
     std::shared_ptr<InputsEmbedder> m_inputs_embedder;
 
@@ -387,7 +389,6 @@ public:
         
         ov::Tensor score_aggregation_window = _get_or_resize_tensor(m_cached_score_aggregation_window, "score_aggregation_window",
             {batch_size_in_sequences}, ov::element::i32);
-
         ov::Tensor hidden_state_input = _prepare_hidden_state_input(total_num_tokens, hidden_size);
         float* hidden_state_data = nullptr;
         if (hidden_state_input) {
@@ -495,6 +496,8 @@ public:
                     num_running_sequences
                 );
             }
+            std::cout << "    [forward] sequence group " << seq_group_id << " with " << num_running_sequences
+                                << " running sequences, scheduling " << num_scheduled_tokens << " tokens:" << std::endl;
 
             for (size_t seq_idx = 0; seq_idx < num_running_sequences; ++seq_idx) {
                 if (sequence_group_type == SequenceGroupType::EMBEDDINGS) {
@@ -527,20 +530,58 @@ public:
                     m_sequence_hidden_state_mapping[key] = HiddenStateRange{start_token_idx, sequence_length};
                 }
                 if (_is_hs_import()) {
-                    auto it = m_initial_hidden_states.find(sequence_group->get_request_id());
-                    OPENVINO_ASSERT(it != m_initial_hidden_states.end() && it->second.get_size() > 0,
-                                    "Missing initial hidden state for Eagle3 draft model inference.");
-                    const auto& stored_hidden_state = it->second;
-                    auto stored_shape = stored_hidden_state.get_shape();
-                    OPENVINO_ASSERT(stored_shape.size() > 0, "Unexpected hidden state shape for Eagle3 draft model inference.");
-                    size_t stored_seq_len = stored_shape[0];
-                    size_t stored_hidden_size = stored_shape[stored_shape.size() - 1];
+                    const size_t request_id = sequence_group->get_request_id();
+                    const bool is_prompt_phase = group_position_id < prompt_len;
+                    if (is_prompt_phase) {
+                        const size_t prompt_copy_length = std::min(num_scheduled_tokens, prompt_len - group_position_id);
+                        const auto prompt_cache_it = s_prompt_hidden_state_cache.find(request_id);
+                        OPENVINO_ASSERT(prompt_cache_it != s_prompt_hidden_state_cache.end() && prompt_cache_it->second.get_size() > 0,
+                                        "Missing cached prompt hidden states for Eagle3 draft model inference.");
+                        const auto& cached_prompt_hidden_state = prompt_cache_it->second;
+                        const auto cached_shape = cached_prompt_hidden_state.get_shape();
+                        std::cout << "[hs_cache][import_prompt] req=" << request_id
+                                  << " grouped_seq=" << sequence->get_grouped_id()
+                                  << " start=" << group_position_id
+                                  << " len=" << prompt_copy_length
+                                  << " cache_shape=" << cached_shape
+                                  << " dst_token_idx=" << current_token_idx
+                                  << std::endl;
+                        OPENVINO_ASSERT(cached_shape.size() >= 2, "Unexpected cached prompt hidden state shape for Eagle3 draft model inference.");
+                        OPENVINO_ASSERT(cached_shape[0] >= group_position_id + prompt_copy_length,
+                                        "Cached prompt hidden state is shorter than the requested prompt chunk in Eagle3 draft model inference.");
+                        OPENVINO_ASSERT(cached_shape[cached_shape.size() - 1] == hidden_size,
+                                        "Cached prompt hidden state hidden size does not match the expected size for Eagle3 draft model inference.");
+                        _copy_roi_between_tensors(cached_prompt_hidden_state,
+                                                  group_position_id,
+                                                  prompt_copy_length,
+                                                  hidden_state_input,
+                                                  current_token_idx);
+                    } else {
+                        auto it = m_initial_hidden_states.find(request_id);
+                        OPENVINO_ASSERT(it != m_initial_hidden_states.end() && it->second.get_size() > 0,
+                                        "Missing initial hidden state for Eagle3 draft model inference.");
+                        const auto& stored_hidden_state = it->second;
+                        auto stored_shape = stored_hidden_state.get_shape();
+                        OPENVINO_ASSERT(stored_shape.size() > 0, "Unexpected hidden state shape for Eagle3 draft model inference.");
+                        size_t stored_seq_len = stored_shape[0];
+                        size_t stored_hidden_size = stored_shape[stored_shape.size() - 1];
+                        std::cout << "stored hidden state shape: " << stored_hidden_state.get_shape() << std::endl;
+                        std::cout << "num_scheduled_tokens: " << num_scheduled_tokens << ", hidden_size: " << hidden_size << std::endl;
 
-                    OPENVINO_ASSERT(stored_hidden_size == hidden_size, "Target state hidden size does not match the expected size for Eagle3 draft model inference.");
-                    OPENVINO_ASSERT(stored_seq_len == total_num_tokens, "Target state sequence length does not match the expected length for Eagle3 draft model inference.");
+                        OPENVINO_ASSERT(stored_hidden_size == hidden_size, "Target state hidden size does not match the expected size for Eagle3 draft model inference.");
+                        OPENVINO_ASSERT(stored_seq_len == num_scheduled_tokens, "Target state sequence length does not match the expected length for Eagle3 draft model inference.");
 
-                    // fill the draft model hidden state input with the target hidden state
-                    hidden_state_input = stored_hidden_state;
+                        // fill the draft model hidden state input with the target hidden state
+                        if (stored_seq_len == total_num_tokens) {
+                            hidden_state_input = stored_hidden_state;
+                        } else {
+                            OPENVINO_ASSERT(stored_seq_len >= num_scheduled_tokens, "Stored hidden state length is shorter than the scheduled token chunk in Eagle3 draft model inference.");
+                            size_t copy_length = num_scheduled_tokens;
+                            const size_t source_start_idx = stored_seq_len - copy_length;
+                            _copy_roi_between_tensors(stored_hidden_state, source_start_idx, copy_length, hidden_state_input, current_token_idx);
+                        }
+                    }
+
                 } else if (_is_hs_internal()) {
                     // fill hidden_state_data with m_hidden_states
                     if (hidden_state_data) {
@@ -563,6 +604,7 @@ public:
                         }
                     }
                 }
+                std::cout << "      Seq " << sequence->get_id() << " input_ids: ";
                 for (size_t token_id = 0, position_id = group_position_id; token_id < num_scheduled_tokens; ++token_id, ++position_id, ++gathering_current_index) {
                     // compute token for current sequence
                     if (sequence_group_type == SequenceGroupType::TOKENS) {
@@ -570,6 +612,7 @@ public:
                             sequence_group->get_prompt_ids()[position_id] :
                             sequence->get_generated_ids()[position_id - prompt_len];
                         position_ids_data[position_ids_idx] = position_id;
+                        std::cout << input_ids_data[token_id] << " ";
                     } else if (sequence_group_type == SequenceGroupType::EMBEDDINGS) {
                         const auto& generated_embeds = sequence->get_generated_ids_embeds();
                         const float* src = position_id < prompt_len ? sequence_group->get_input_embeds()[position_id].data() :  generated_embeds[position_id - prompt_len].data();
@@ -598,6 +641,7 @@ public:
                     }
                     position_ids_idx++;
                 }
+                std::cout << std::endl;
 
                 size_t num_blocks = sequence_group->get_num_logical_blocks();
                 size_t expected_kv_cache_size = sequence_group->get_num_processed_tokens() - sequence_group->get_num_evicted_tokens();
@@ -759,8 +803,38 @@ public:
                 std::vector<Sequence::Ptr> running_sequences = sequence_group->get_running_sequences();
                 for (size_t seq_idx = 0; seq_idx < running_sequences.size(); ++seq_idx) {
                     Sequence::Ptr sequence = running_sequences[seq_idx];
-                    sequence->update_hidden_state(
-                        _get_hidden_state(sequence_group->get_request_id(), sequence->get_grouped_id()));
+                    const auto hidden_state = _get_hidden_state(sequence_group->get_request_id(), sequence->get_grouped_id());
+                    sequence->update_hidden_state(hidden_state);
+
+                    const size_t prompt_len = sequence_group->get_prompt_len();
+                    const size_t group_position_id = sequence_group->get_num_processed_tokens();
+                    if (hidden_state.get_size() > 0 && group_position_id < prompt_len) {
+                        const size_t prompt_copy_length = std::min(sequence_group->get_num_scheduled_tokens(), prompt_len - group_position_id);
+                        if (prompt_copy_length > 0) {
+                            auto& cached_prompt_hidden_state = s_prompt_hidden_state_cache[sequence_group->get_request_id()];
+                            const ov::Shape required_shape{prompt_len, 1, hidden_state.get_shape().back()};
+                            if (!cached_prompt_hidden_state || cached_prompt_hidden_state.get_shape() != required_shape) {
+                                cached_prompt_hidden_state = ov::Tensor(hidden_state.get_element_type(), required_shape);
+                                std::memset(cached_prompt_hidden_state.data<float>(), 0, cached_prompt_hidden_state.get_byte_size());
+                                std::cout << "[hs_cache][alloc_prompt] req=" << sequence_group->get_request_id()
+                                          << " grouped_seq=" << sequence->get_grouped_id()
+                                          << " shape=" << required_shape
+                                          << std::endl;
+                            }
+                            _copy_roi_between_tensors(hidden_state,
+                                                      0,
+                                                      prompt_copy_length,
+                                                      cached_prompt_hidden_state,
+                                                      group_position_id);
+                            std::cout << "[hs_cache][export_prompt] req=" << sequence_group->get_request_id()
+                                      << " grouped_seq=" << sequence->get_grouped_id()
+                                      << " start=" << group_position_id
+                                      << " len=" << prompt_copy_length
+                                      << " src_shape=" << hidden_state.get_shape()
+                                      << " cache_shape=" << cached_prompt_hidden_state.get_shape()
+                                      << std::endl;
+                        }
+                    }
                 }
             }
         }
@@ -892,11 +966,13 @@ private:
         if (hidden_size == 0) {
             for (const auto& kv : m_initial_hidden_states) {
                 const auto& initial_hidden_states = kv.second;
-                auto hidden_states_shape = initial_hidden_states.get_shape();
-                OPENVINO_ASSERT(initial_hidden_states && hidden_states_shape.size() >= 2,
-                                "Initial hidden states tensor rank is less than 2.");
-                hidden_size = hidden_states_shape.back();
-                break;
+                if (initial_hidden_states) {
+                    auto hidden_states_shape = initial_hidden_states.get_shape();
+                    OPENVINO_ASSERT(hidden_states_shape.size() >= 2,
+                                    "Initial hidden states tensor rank is less than 2.");
+                    hidden_size = hidden_states_shape.back();
+                    break;
+                }
             }
         }
         if (hidden_size == 0) {

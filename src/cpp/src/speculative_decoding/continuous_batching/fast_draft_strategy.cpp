@@ -185,9 +185,12 @@ void ContinuousBatchingPipeline::SpeculativeDecodingImpl::step() {
     std::map<int64_t, UpdateRequestResult> update_sequence_info;
     // put candidates to model KV cache
     auto draft_generated_requests = m_draft_pipeline->get_generated_requests();
+
     for (const auto& candidate : m_draft_pipeline->get_generated_requests()) {
         auto update_result = m_main_pipeline->update_request(candidate.first, candidate.second, false);
         update_sequence_info.insert({{candidate.first, update_result}});
+        std::cout << "         Draft generated request: request_id=" << candidate.first << " | num_inserted_tokens=" << update_result.inserted_tokens_cnt
+                  << " | num_removed_tokens=" << update_result.removed_tokens_cnt << std::endl;
     }
 
     const auto main_start = std::chrono::steady_clock::now();
@@ -201,6 +204,8 @@ void ContinuousBatchingPipeline::SpeculativeDecodingImpl::step() {
     for (const auto& checked_sequence : main_generated_requests) {
         auto update_result = m_draft_pipeline->update_request(checked_sequence.first, checked_sequence.second, true);
         update_sequence_info[checked_sequence.first].removed_tokens_cnt = update_result.removed_tokens_cnt;
+        std::cout << "         Main generated request: request_id=" << checked_sequence.first << " | num_inserted_tokens=" << update_result.inserted_tokens_cnt
+                  << " | num_removed_tokens=" << update_result.removed_tokens_cnt << std::endl;
     }
 
     // finish draft request if the generation was completed

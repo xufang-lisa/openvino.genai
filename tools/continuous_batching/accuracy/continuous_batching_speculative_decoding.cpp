@@ -37,7 +37,7 @@ std::vector<ov::genai::GenerationConfig> get_spec_decoding_generation_config_exa
     // sampling param for speulative decoding
     ov::genai::GenerationConfig generation_config_greedy_constant = greedy_config();
     {
-        generation_config_greedy_constant.num_assistant_tokens = 5;
+        generation_config_greedy_constant.num_assistant_tokens = 4;
     }
 
     ov::genai::GenerationConfig generation_config_multinomial_constant = multinomial_config();
@@ -58,9 +58,9 @@ std::vector<ov::genai::GenerationConfig> get_spec_decoding_generation_config_exa
 
     return {
         generation_config_greedy_constant,
-        generation_config_multinomial_constant,
-        generation_config_greedy_dynamic,
-        generation_config_multinomial_dynamic,
+        // generation_config_multinomial_constant,
+        // generation_config_greedy_dynamic,
+        // generation_config_multinomial_dynamic,
     };
 }
 
@@ -98,9 +98,9 @@ int main(int argc, char* argv[]) try {
     const std::string device = result["device"].as<std::string>();
 
     std::vector<std::string> prompt_examples = {
-        "What is OpenVINO?",
-        "How are you?",
-        "What is your name?",
+        // "What is OpenVINO?",
+        // "How are you?",
+        // "What is your name?",
         "Tell me something about Canada",
         "What is OpenVINO?",
     };
@@ -118,7 +118,7 @@ int main(int argc, char* argv[]) try {
 
     ov::genai::SchedulerConfig scheduler_config;
     // batch size
-    scheduler_config.max_num_batched_tokens = 32;
+    scheduler_config.max_num_batched_tokens = 10;
     // cache params
     scheduler_config.num_kv_blocks = 364;
     // mode - vLLM or dynamic_split_fuse

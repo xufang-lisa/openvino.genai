@@ -143,6 +143,7 @@ remove_tokens_from_sequence(Sequence::Ptr& sequence,
         logit_proccessor.decrease_generated_token_occurance(generated_token_ids[i]);
     }
     sequence->remove_last_tokens(removed_token_cnt);
+    std::cout << "Removed " << removed_token_cnt << " tokens from sequence " << sequence->get_id() << std::endl;
     return (sequence_generated_len - min_generated_tokens);
 }
 
@@ -254,6 +255,7 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::update
         size_t min_generated_tokens, min_candidate_len;
         int num_tokens_needs_kv_update = -1;
         if (running_sequences.front()->get_generated_len() == 0 && !request->get_num_tokens_to_validate()) {
+            std::cout << "Initializing request " << request_id << " by candidate." << std::endl;
             m_sampler->create_logit_processor(request_id, request->get_sampling_parameters(), request->get_prompt_ids());
             auto& logit_processor = m_sampler->get_logit_processor(request_id);
             result.inserted_tokens_cnt = init_request(request, candidates, logit_processor, is_update_logit_processor);
@@ -266,6 +268,7 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::update
             }
         } else {
             // update existing sequences by the candidates
+            std::cout << "Updating request " << request_id << " by candidate." << std::endl;
             auto& logit_processor = m_sampler->get_logit_processor(request_id);
             std::tie(min_generated_tokens, min_candidate_len) = get_prefix_len(running_sequences, candidates);
 
@@ -320,7 +323,9 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::update
         }
         if (num_tokens_needs_kv_update < 0 && result.inserted_tokens_cnt > 0 && result.removed_tokens_cnt == 0) {
             request->set_num_validated_tokens(result.inserted_tokens_cnt);
+            std::cout << "set_num_validated_tokens debug2" << std::endl;
         } else if (num_tokens_needs_kv_update >= 0) {
+            std::cout << "set_num_validated_tokens debug3" << std::endl;
             request->set_num_validated_tokens(num_tokens_needs_kv_update);  // in generation stage
         }
         // to pause `draft_model` generation in case of `generated_len >= max_new_tokens - 1` to generate last token by `main_model`
@@ -331,12 +336,16 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::update
         //    in this case, `draft_model` can also begin processing the same portion of prompt.
         if (!m_is_validation_mode_enabled) {
             bool pause_gen_status = false;
+            const bool has_main_generated_token = running_sequences.front()->get_generated_len() > 0 || result.inserted_tokens_cnt > 0;
             generated_len -= result.removed_tokens_cnt;
             generated_len += result.inserted_tokens_cnt;
-            if (generated_len >= max_new_tokens - 1 || generated_len != 0 && result.inserted_tokens_cnt == 0) {
+            if (!has_main_generated_token) {
+                pause_gen_status = true;
+            } else if (generated_len >= max_new_tokens - 1 || generated_len != 0 && result.inserted_tokens_cnt == 0) {
                 pause_gen_status = true;
             }
             request->pause_generation(pause_gen_status);
+            std::cout << "    [update_request] draft Request " << request_id << ", pause_generation=" << pause_gen_status << std::endl;
         }
         break;
     }
@@ -356,6 +365,7 @@ ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::pull_a
     std::lock_guard<std::mutex> lock{m_awaiting_requests_mutex};
     if (is_pause_request) {
         for (auto& awaiting_request : m_awaiting_requests) {
+            std::cout << "pause_generation for awaiting request " << awaiting_request->get_request_id() << std::endl;
             awaiting_request->pause_generation(true);
         }
     }
@@ -372,7 +382,9 @@ void ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::m
         generated_tokens_cnt++;
 
         const auto step_start = std::chrono::steady_clock::now();
+        std::cout << "  Draft Step " << generated_tokens_cnt << " start" << std::endl;
         step();
+        std::cout << "  Draft Step " << generated_tokens_cnt << " end" << std::endl;
         const auto step_end = std::chrono::steady_clock::now();
         const auto generation_duration = PerfMetrics::get_microsec(step_end - step_start);
 
@@ -384,11 +396,25 @@ void ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::m
             raw_perf_metrics.m_batch_sizes.emplace_back(num_generated_tokens);
         }
 
-        if (eagle_mode_enabled)
-            m_model_runner->enable_hidden_state_import(false);
         to_generate = false;
+        bool has_active_prompt_phase_requests = false;
+        // bool has_pending_validation_requests = false;
         for (auto& request : m_requests) {
             const auto& sampling_params = request->get_sampling_parameters();
+            std::cout << "    multistep Request " << request->get_request_id() << ": num_processed_tokens=" << request->get_num_processed_tokens() << ", prompt_len=" << request->get_prompt_len() << ", max_new_tokens=" << request->get_max_new_tokens() << std::endl;
+            // const bool has_pending_validation_tokens = request->get_num_tokens_to_validate() > 0;
+            // if (has_pending_validation_tokens &&
+            //     !request->handle_stopped() &&
+            //     !request->handle_cancelled()) {
+            //     has_pending_validation_requests = true;
+            // }
+
+            if (request->get_num_processed_tokens() < request->get_prompt_len() &&
+                !request->handle_stopped() &&
+                !request->handle_cancelled()) {
+                has_active_prompt_phase_requests = true;
+            }
+
             if (!sampling_params.is_assisting_generation()) {
                 // generate only one token in case of non speculative decoding
                 request->pause_generation(true);
@@ -397,16 +423,33 @@ void ContinuousBatchingPipeline::ContinuousBatchingForSpeculativeDecodingImpl::m
                 request->pause_generation(true);
             } else if (request->get_num_processed_tokens() == 0 && sampling_params.num_return_sequences > 1) {
                 request->pause_generation(true);
-            } else if (sampling_params.num_assistant_tokens <= generated_tokens_cnt && sampling_params.assistant_confidence_threshold == 0.f) {
+            } else if (request->get_num_processed_tokens() >= request->get_prompt_len() &&
+                    //    !has_pending_validation_tokens &&
+                       sampling_params.num_assistant_tokens <= generated_tokens_cnt &&
+                       sampling_params.assistant_confidence_threshold == 0.f) {
                 request->pause_generation(true);
             } else if (request->get_max_new_tokens() == 0) {
                 request->pause_generation(true);
-            } else if (request->get_num_processed_tokens() == request->get_prompt_len()) {
+            } else if (request->get_num_processed_tokens() == request->get_prompt_len() /*&&
+                       !has_pending_validation_tokens*/) {
                 request->pause_generation(true);
             } else if (is_stop_token_id_hit_in_sequence_group(request, sampling_params.stop_token_ids)) {
                 request->pause_generation(true);
             }
-            to_generate |= request->can_generate_tokens();
+            const bool should_continue_prompt_catchup = eagle_mode_enabled &&
+                                                        request->get_num_processed_tokens() < request->get_prompt_len() &&
+                                                        !request->is_waiting() &&
+                                                        !request->handle_stopped() &&
+                                                        !request->handle_cancelled();
+            // const bool should_continue_validation_catchup = eagle_mode_enabled &&
+            //                                                 has_pending_validation_tokens &&
+            //                                                 !request->is_waiting() &&
+            //                                                 !request->handle_stopped() &&
+            //                                                 !request->handle_cancelled();
+            to_generate |= request->can_generate_tokens() || should_continue_prompt_catchup; // || should_continue_validation_catchup;
+        }
+        if (eagle_mode_enabled) {
+            m_model_runner->enable_hidden_state_import(has_active_prompt_phase_requests); // || has_pending_validation_requests);
         }
     }
     if (eagle_mode_enabled)

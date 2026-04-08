@@ -480,6 +480,7 @@ public:
 
     // a sequence group can generate new tokens if it already processed m_max_content_len before
     bool can_generate_tokens() const {
+        std::cout << "[can_generate_tokens] m_max_content_len: " << m_max_content_len << ", m_num_validation_tokens: " << m_num_validation_tokens << ", get_prompt_len(): " << get_prompt_len() << ", m_is_gen_paused: " << m_is_gen_paused << std::endl;
         return m_max_content_len + m_num_validation_tokens >= get_prompt_len() && !m_is_gen_paused;
     }
 
@@ -651,6 +652,7 @@ public:
     }
 
     bool requires_sampling() const {
+        // std::cout << "context_len=" << get_context_len() << " prompt_len=" << get_prompt_len() << " max_content_len=" << m_max_content_len << " max_new_tokens=" << get_max_new_tokens() << std::endl;
         return get_context_len() >= get_prompt_len() && get_context_len() > m_max_content_len && get_max_new_tokens() > 0;
     }
 
@@ -687,17 +689,37 @@ public:
     size_t get_num_available_tokens_for_batching() const {
         OPENVINO_ASSERT(!has_finished(), "Internal error: this function cannot be called on finished sequence group");
         OPENVINO_ASSERT(get_num_scheduled_tokens() == 0, "Internal error: this function cannot be called when we are already in scheduling phase");
-        // if sequence group has not finished, it has at least one token to process
         size_t num_available_tokens = std::max(get_prompt_len(), m_max_content_len);
+        // size_t base_tokens_to_process = num_available_tokens > m_num_processed_tokens ?
+        //                                 num_available_tokens - m_num_processed_tokens :
+        //                                 0;
+        // // If there are no prompt/generation catch-up tokens and no validation tokens,
+        // // keep scheduling a single next-token step for normal generation.
+        // if (base_tokens_to_process == 0 && m_num_validation_tokens == 0) {
+        //     base_tokens_to_process = 1;
+        // }
+        std::cout << "[get_num_available_tokens_for_batching] num_available_tokens: " << num_available_tokens << ", m_num_processed_tokens: " << m_num_processed_tokens << ", m_num_validation_tokens: " << m_num_validation_tokens << std::endl;
+        // return base_tokens_to_process + m_num_validation_tokens;
         return std::max<size_t>(num_available_tokens - m_num_processed_tokens, 1u) + m_num_validation_tokens;
     }
 
     // mark current schedule phase as finished and updates internal counters
     void finish_iteration() {
+        // const size_t available_non_validation_tokens = std::max(get_prompt_len(), m_max_content_len);
+        // const size_t processed_after_iteration = m_num_processed_tokens + m_num_scheduled_tokens;
+        // size_t consumed_validation_tokens = 0;
+        // if (processed_after_iteration > available_non_validation_tokens) {
+        //     consumed_validation_tokens = std::min(m_num_validation_tokens,
+        //                                           processed_after_iteration - available_non_validation_tokens);
+        // }
+
         m_num_processed_tokens += m_num_scheduled_tokens;
         // if some processed tokens were evicted, max content len is greater than number of processed tokens
         m_max_content_len = std::max(m_max_content_len, m_num_processed_tokens);
         clear_scheduled_tokens();
+        // m_num_scheduled_tokens = 0;
+        // m_output_seq_len = 0;
+        // m_num_validation_tokens -= consumed_validation_tokens;
     }
 
     void update_processed_tokens_num(size_t processed_tokens) {

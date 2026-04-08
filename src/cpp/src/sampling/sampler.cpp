@@ -976,6 +976,7 @@ SamplerOutput Sampler::sample(const std::vector<SequenceGroup::Ptr> & sequence_g
                                                                       logit_processor, stop_strings, is_validation_mode_enabled);
         } else {
             // we are in prompt processing phase when prompt is split into chunks and processed step by step
+            std::cout << "Sampler: skip sampling for sequence group " << request_id << " in prompt processing phase" << std::endl;
         }
         // accumulate a number of processed tokens
         currently_processed_tokens += output_seq_len * num_running_sequences;
@@ -1019,6 +1020,7 @@ SamplerOutput Sampler::sample(const std::vector<SequenceGroup::Ptr> & sequence_g
             logit_processor.update_generated_len(min_processed_tokens);
         }
         if (assisting_pipeline_info.updated_validation_len) {
+            std::cout << "set_num_validated_tokens debug1" << std::endl;
             sequence_group->set_num_validated_tokens(assisting_pipeline_info.updated_validation_len);
         }
     }
