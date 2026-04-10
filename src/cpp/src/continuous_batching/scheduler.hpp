@@ -34,6 +34,7 @@ class Scheduler {
     std::shared_ptr<CacheManager> m_cache_manager;
 
     size_t m_snapkv_window_size = 1;
+    std::map<uint64_t, size_t> m_expected_num_scheduled_tokens;
 public:
     struct Output {
         // IDs of scheduled groups
@@ -177,6 +178,22 @@ public:
         m_block_manager->clear();
     }
 
+    void set_expected_num_scheduled_tokens(uint64_t seq_id, size_t num_tokens) {
+        m_expected_num_scheduled_tokens[seq_id] = num_tokens;
+    }
+
+    size_t get_expected_num_scheduled_tokens(uint64_t seq_id) const {
+        auto it = m_expected_num_scheduled_tokens.find(seq_id);
+        if (it != m_expected_num_scheduled_tokens.end()) {
+            return it->second;
+        }
+        return 0;
+    }
+
+    void clear_expected_num_scheduled_tokens(uint64_t seq_id) {
+        m_expected_num_scheduled_tokens.erase(seq_id);
+    }
+
 private:
     static size_t _num_running_sequence_groups(const std::vector<SequenceGroup::Ptr>& sequence_groups) {
         size_t num_running = 0;
@@ -299,6 +316,14 @@ private:
                 // apply megabatch limitations
                 size_t num_scheduled_tokens = std::min(num_tokens_in_megabatch, num_available_tokens);
 
+                auto it_expected_scheduled_tokens = m_expected_num_scheduled_tokens.find(sequence_group->get_request_id());
+                if (it_expected_scheduled_tokens != m_expected_num_scheduled_tokens.end()) {
+                    auto expected_num_scheduled_tokens = it_expected_scheduled_tokens->second;
+                    if (expected_num_scheduled_tokens != num_scheduled_tokens && expected_num_scheduled_tokens <= num_available_tokens) {
+                        num_scheduled_tokens = expected_num_scheduled_tokens;
+                    }
+                }
+
                 // apply KV cache limitations
                 size_t block_size = get_block_size();
                 size_t currently_allocated_token_slots = sequence_group->get_num_blocks() * block_size;
@@ -355,7 +380,7 @@ private:
                 }
 
                 // if we added maximum amount of tokens to compute
-                if (scheduler_output.m_total_num_scheduled_tokens == m_config.max_num_batched_tokens)
+                if (scheduler_output.m_total_num_scheduled_tokens >= m_config.max_num_batched_tokens)
                     break;
             }
         }
@@ -483,8 +508,7 @@ private:
                 OPENVINO_ASSERT(m_config.max_num_batched_tokens >= sequence_len, "Sequence length (", sequence_len, ") is longer than max number of tokens in batch (", m_config.max_num_batched_tokens, ")");
                 std::cout << "    [schedule] sequence group " << sequence_group_id << " max_num_batched_tokens=" << m_config.max_num_batched_tokens
                 << " num_available_tokens=" << sequence_len << std::endl;
-                std::cout << "    [schedule] sequence group " << sequence_group_id << " max_num_batched_tokens=" << m_config.max_num_batched_tokens
-                << " num_available_tokens=" << sequence_len << std::endl;
+
                 // if we limited by max_num_seqs condition
                 if (num_running_sequence_groups >= m_config.max_num_seqs)
                     break;

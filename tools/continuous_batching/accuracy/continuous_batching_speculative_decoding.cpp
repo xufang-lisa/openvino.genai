@@ -98,11 +98,13 @@ int main(int argc, char* argv[]) try {
     const std::string device = result["device"].as<std::string>();
 
     std::vector<std::string> prompt_examples = {
-        // "What is OpenVINO?",
-        // "How are you?",
-        // "What is your name?",
+        "What is OpenVINO?",
+        "How are you?",
+        "What is your name?",
         "Tell me something about Canada",
         "What is OpenVINO?",
+        // "Please tell me something about Canada based on your knowledge, such as its geography, culture, history, or unique national characteristics.",
+        // "Do you know why the Sun appears yellow to us on Earth, even though it actually emits white light?",
     };
 
     auto generation_config = get_spec_decoding_generation_config_examples();
@@ -118,7 +120,7 @@ int main(int argc, char* argv[]) try {
 
     ov::genai::SchedulerConfig scheduler_config;
     // batch size
-    scheduler_config.max_num_batched_tokens = 10;
+    scheduler_config.max_num_batched_tokens = 30;
     // cache params
     scheduler_config.num_kv_blocks = 364;
     // mode - vLLM or dynamic_split_fuse

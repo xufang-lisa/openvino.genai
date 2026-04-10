@@ -15,11 +15,16 @@ struct GeneratedSequence {
     // where hidden states are required to efficiently validate and extend speculative tokens.
     // If not using eagle speculative decoding, this field may remain empty.
     ov::Tensor hidden_states;
+    // Store the number of tokens that have been processed by the main model when this sequence is generated.
+    // This is used to ensure proper alignment between the main model and draft model during speculative decoding.
+    size_t num_processed_tokens = 0;
     GeneratedSequence(const std::vector<int64_t>& generated_token_ids,
                     const std::vector<float>& generated_log_probs,
+                    size_t num_processed_tokens = 0,
                     const ov::Tensor& generated_hidden_states = {}) :
         token_ids(generated_token_ids),
         log_probs(generated_log_probs),
+        num_processed_tokens(num_processed_tokens),
         hidden_states(generated_hidden_states) {};
 };
 
