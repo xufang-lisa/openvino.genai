@@ -735,9 +735,6 @@ def create_evaluator(base_model, args):
                 crop_question = False
             else:
                 crop_question = True
-            frames_num = args.video_frames_num
-            if frames_num is None and "videochat_flash_qwen" in config.model_type:
-                frames_num = getattr(config, "mm_local_num_frames", 1)
             return EvaluatorCLS(
                 base_model=base_model,
                 gt_data=args.gt_data,
@@ -750,7 +747,7 @@ def create_evaluator(base_model, args):
                 processor=processor,
                 crop_question=crop_question,
                 task_type=task,
-                frames_num=frames_num,
+                frames_num=args.video_frames_num,
                 pruning_ratio=args.pruning_ratio,
                 relevance_weight=args.relevance_weight,
             )
