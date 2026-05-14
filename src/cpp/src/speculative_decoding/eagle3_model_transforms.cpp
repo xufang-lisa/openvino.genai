@@ -10,10 +10,14 @@
 #include "logger.hpp"
 #include "openvino/op/add.hpp"
 #include "openvino/op/concat.hpp"
+#include "openvino/op/convert.hpp"
 #include "openvino/op/gather.hpp"
 #include "openvino/op/matmul.hpp"
 #include "openvino/op/multiply.hpp"
+#include "openvino/op/reshape.hpp"
 #include "openvino/op/result.hpp"
+#include "openvino/op/squeeze.hpp"
+#include "openvino/op/unsqueeze.hpp"
 #include "utils.hpp"
 
 namespace ov {
@@ -241,16 +245,51 @@ void transform_hidden_state(std::shared_ptr<ov::Model>& model, const std::vector
         patterns.emplace_back("midlayer"); // draft description
     }
 
-    // Helper: check if node is a residual Add node with expected structure
-    auto is_residual_node = [](const std::shared_ptr<ov::Node>& node) -> bool {
-        if (const auto& add = ov::as_type_ptr<ov::op::v1::Add>(node)) {
-            auto input1 = add->get_input_node_shared_ptr(1);
-            auto matmul = ov::as_type_ptr<ov::op::v0::MatMul>(input1);
-            if (!matmul) return false;
-            auto matmul_input = matmul->get_input_node_shared_ptr(0);
-            return matmul_input && ov::is_type<ov::op::v1::Multiply>(matmul_input);
+    // Skip lightweight shape/type wrappers that may appear after graph transformations.
+    auto unwrap_passthrough = [](std::shared_ptr<ov::Node> node) -> std::shared_ptr<ov::Node> {
+        while (node) {
+            if (ov::is_type<ov::op::v0::Convert>(node) ||
+                ov::is_type<ov::op::v1::Reshape>(node) ||
+                ov::is_type<ov::op::v0::Squeeze>(node) ||
+                ov::is_type<ov::op::v0::Unsqueeze>(node)) {
+                if (node->get_input_size() == 0) {
+                    break;
+                }
+                node = node->get_input_node_shared_ptr(0);
+                continue;
+            }
+            break;
         }
-        return false;
+        return node;
+    };
+
+    auto is_matmul_multiply_path = [&unwrap_passthrough](const std::shared_ptr<ov::Node>& node) -> bool {
+        auto unwrapped = unwrap_passthrough(node);
+        auto matmul = ov::as_type_ptr<ov::op::v0::MatMul>(unwrapped);
+        if (!matmul) {
+            return false;
+        }
+
+        auto matmul_input = unwrap_passthrough(matmul->get_input_node_shared_ptr(0));
+        if (matmul_input && ov::is_type<ov::op::v1::Multiply>(matmul_input)) {
+            return true;
+        }
+
+        matmul_input = unwrap_passthrough(matmul->get_input_node_shared_ptr(1));
+        return matmul_input && ov::is_type<ov::op::v1::Multiply>(matmul_input);
+    };
+
+    // Helper: check if node is a residual Add node with expected structure.
+    // Add is commutative, so both inputs are checked.
+    auto is_residual_node = [&is_matmul_multiply_path](const std::shared_ptr<ov::Node>& node) -> bool {
+        const auto add = ov::as_type_ptr<ov::op::v1::Add>(node);
+        if (!add || add->get_input_size() != 2) {
+            return false;
+        }
+
+        const auto left = add->get_input_node_shared_ptr(0);
+        const auto right = add->get_input_node_shared_ptr(1);
+        return is_matmul_multiply_path(left) || is_matmul_multiply_path(right);
     };
 
     std::vector<ov::Output<ov::Node>> residual_outputs;
