@@ -292,21 +292,36 @@ void transform_hidden_state(std::shared_ptr<ov::Model>& model, const std::vector
         return is_matmul_multiply_path(left) || is_matmul_multiply_path(right);
     };
 
-    std::vector<ov::Output<ov::Node>> residual_outputs;
+    // Keep a single residual output per pattern. If multiple nodes match the same pattern,
+    // use the last one in topological order (typically the block output residual).
+    std::vector<ov::Output<ov::Node>> residual_outputs(patterns.size());
+    std::vector<bool> pattern_matched(patterns.size(), false);
     for (const auto& node : model->get_ordered_ops()) {
         if (!is_residual_node(node)) continue;
         const std::string& name = node->get_friendly_name();
-        for (const auto& pattern : patterns) {
-            if (name.find(pattern) != std::string::npos) {
-                residual_outputs.push_back(node->output(0));
+        for (size_t pattern_idx = 0; pattern_idx < patterns.size(); ++pattern_idx) {
+            if (name.find(patterns[pattern_idx]) != std::string::npos) {
+                residual_outputs[pattern_idx] = node->output(0);
+                pattern_matched[pattern_idx] = true;
                 break;
             }
         }
     }
 
-    if (!residual_outputs.empty()) {
-        OPENVINO_ASSERT(residual_outputs.size() == patterns.size(),
-                        "Number of extracted hidden states does not match the requested number.");
+    bool has_any_residual_output = false;
+    for (bool matched : pattern_matched) {
+        has_any_residual_output = has_any_residual_output || matched;
+    }
+
+    if (has_any_residual_output) {
+        OPENVINO_ASSERT(pattern_matched.size() == patterns.size(),
+                        "Internal error: matched-pattern bookkeeping is inconsistent.");
+        for (size_t pattern_idx = 0; pattern_idx < patterns.size(); ++pattern_idx) {
+            OPENVINO_ASSERT(pattern_matched[pattern_idx],
+                            "Failed to extract hidden state for pattern: ",
+                            patterns[pattern_idx]);
+        }
+
         std::shared_ptr<ov::Node> node_to_operate;
         if (residual_outputs.size() > 1) {
             auto concat = std::make_shared<ov::op::v0::Concat>(residual_outputs, -1);
