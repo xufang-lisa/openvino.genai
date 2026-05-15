@@ -3,6 +3,7 @@
 
 #include "eagle3_model_transforms.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <nlohmann/json.hpp>
 
@@ -14,6 +15,7 @@
 #include "openvino/op/gather.hpp"
 #include "openvino/op/matmul.hpp"
 #include "openvino/op/multiply.hpp"
+#include "openvino/op/reduce_sum.hpp"
 #include "openvino/op/reshape.hpp"
 #include "openvino/op/result.hpp"
 #include "openvino/op/squeeze.hpp"
@@ -250,6 +252,7 @@ void transform_hidden_state(std::shared_ptr<ov::Model>& model, const std::vector
         while (node) {
             if (ov::is_type<ov::op::v0::Convert>(node) ||
                 ov::is_type<ov::op::v1::Reshape>(node) ||
+                ov::is_type<ov::op::v1::ReduceSum>(node) ||
                 ov::is_type<ov::op::v0::Squeeze>(node) ||
                 ov::is_type<ov::op::v0::Unsqueeze>(node)) {
                 if (node->get_input_size() == 0) {
@@ -261,6 +264,11 @@ void transform_hidden_state(std::shared_ptr<ov::Model>& model, const std::vector
             break;
         }
         return node;
+    };
+
+    auto is_multiply_path = [&unwrap_passthrough](const std::shared_ptr<ov::Node>& node) -> bool {
+        auto unwrapped = unwrap_passthrough(node);
+        return unwrapped && ov::is_type<ov::op::v1::Multiply>(unwrapped);
     };
 
     auto is_matmul_multiply_path = [&unwrap_passthrough](const std::shared_ptr<ov::Node>& node) -> bool {
@@ -279,9 +287,12 @@ void transform_hidden_state(std::shared_ptr<ov::Model>& model, const std::vector
         return matmul_input && ov::is_type<ov::op::v1::Multiply>(matmul_input);
     };
 
-    // Helper: check if node is a residual Add node with expected structure.
-    // Add is commutative, so both inputs are checked.
-    auto is_residual_node = [&is_matmul_multiply_path](const std::shared_ptr<ov::Node>& node) -> bool {
+    // Helper: check if node is an MLP residual Add node.
+    // Prefer Add + direct Multiply branch and fallback to Add + MatMul->Multiply branch.
+    // Add is commutative so both input orders are allowed.
+    auto is_residual_node = [&unwrap_passthrough,
+                             &is_multiply_path,
+                             &is_matmul_multiply_path](const std::shared_ptr<ov::Node>& node) -> bool {
         const auto add = ov::as_type_ptr<ov::op::v1::Add>(node);
         if (!add || add->get_input_size() != 2) {
             return false;
@@ -289,7 +300,19 @@ void transform_hidden_state(std::shared_ptr<ov::Model>& model, const std::vector
 
         const auto left = add->get_input_node_shared_ptr(0);
         const auto right = add->get_input_node_shared_ptr(1);
-        return is_matmul_multiply_path(left) || is_matmul_multiply_path(right);
+        const auto left_unwrapped = unwrap_passthrough(left);
+        const auto right_unwrapped = unwrap_passthrough(right);
+        const bool left_is_add = left_unwrapped && ov::is_type<ov::op::v1::Add>(left_unwrapped);
+        const bool right_is_add = right_unwrapped && ov::is_type<ov::op::v1::Add>(right_unwrapped);
+
+        const bool strict_match = (left_is_add && is_multiply_path(right)) ||
+                                  (right_is_add && is_multiply_path(left));
+        if (strict_match) {
+            return true;
+        }
+
+        return (left_is_add && is_matmul_multiply_path(right)) ||
+               (right_is_add && is_matmul_multiply_path(left));
     };
 
     // Keep a single residual output per pattern. If multiple nodes match the same pattern,
@@ -308,14 +331,11 @@ void transform_hidden_state(std::shared_ptr<ov::Model>& model, const std::vector
         }
     }
 
-    bool has_any_residual_output = false;
-    for (bool matched : pattern_matched) {
-        has_any_residual_output = has_any_residual_output || matched;
-    }
+    const bool has_any_residual_output = std::any_of(pattern_matched.begin(),
+                                                     pattern_matched.end(),
+                                                     [](bool matched) { return matched; });
 
     if (has_any_residual_output) {
-        OPENVINO_ASSERT(pattern_matched.size() == patterns.size(),
-                        "Internal error: matched-pattern bookkeeping is inconsistent.");
         for (size_t pattern_idx = 0; pattern_idx < patterns.size(); ++pattern_idx) {
             OPENVINO_ASSERT(pattern_matched[pattern_idx],
                             "Failed to extract hidden state for pattern: ",
